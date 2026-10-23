@@ -6,6 +6,7 @@ import { scanMigrations, sqlRefs, roleClosure, grantModel } from './scan-sql.js'
 import { fromMigrations, schemaOf } from './catalog.js';
 import { readCatalog, fromDb } from './db.js';
 import { listEdgeFunctions } from './edge-functions.js';
+import { edgeHints } from './edge-checks.js';
 import { resolveProject } from './supabase-project.js';
 import { coreRules } from './rules/core.js';
 import { loadPlugins, runRules, makeGraph, RuleError, TIERS } from './engine.js';
@@ -21,7 +22,7 @@ const IGNORE_CATEGORY = {
   'exposed-uncalled-function': 'functions', 'granted-helper-function': 'functions',
   'client-table-without-rls': 'tables', 'client-table-without-policies': 'tables', 'unknown-table': 'tables',
   'missing-rpc': 'rpcs',
-  'uncalled-edge-function': 'edgeFunctions',
+  'uncalled-edge-function': 'edgeFunctions', 'edge-service-role-before-auth': 'edgeFunctions', 'edge-request-controlled-fetch': 'edgeFunctions',
 };
 
 /** Subject match: exact, or a function name matching any of its overloads (`name/arity`). */
@@ -142,7 +143,8 @@ export async function analyze(root, opts = {}) {
   }
   /** Node ids for a function name: every arity, or one `missing` node. */
   const fnTargets = (name) => fnIdsByName.get(name) || [node(`fn:${name}`, 'function', name, { schema: schemaOf(name), missing: true }).id];
-  for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.entry });
+  const hints = edgeHints(root, edgeFns, files, code.calls);
+  for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.entry, ...(hints.get(e.name) || {}) });
   // External entry points: config, `// supareach: entry-point <reason>` hatches, verify_jwt = false.
   const entries = [];
   const entryInvalid = [];

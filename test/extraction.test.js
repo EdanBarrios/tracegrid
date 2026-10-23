@@ -375,3 +375,20 @@ test('S2 path aliases from the nearest tsconfig (with extends) and workspace pac
   for (const n of ['target_fn', 'other_fn', 'never_called']) assert.ok(!uncalled(r).has(n), n);
   assert.ok(!r.info.unresolved_dynamic_calls.length, JSON.stringify(r.info.unresolved_dynamic_calls));
 });
+
+test('R5 edge hints: service_role used before any auth check, and fetch of a request-body URL', async () => {
+  const r = await run({
+    'supabase/functions/ef-admin/index.ts': `import { createClient } from 'npm:@supabase/supabase-js';\nconst admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);\nDeno.serve(async (req) => {\n  const { data } = await admin.from('items').select();\n  const { data: u } = await admin.auth.getUser(req.headers.get('Authorization')!);\n  return new Response(JSON.stringify(data));\n});`,
+    'supabase/functions/ef-safe/index.ts': `import { createClient } from 'npm:@supabase/supabase-js';\nconst admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);\nDeno.serve(async (req) => {\n  const { data: { user } } = await admin.auth.getUser(req.headers.get('Authorization')!.slice(7));\n  if (!user) return new Response('no', { status: 401 });\n  return new Response(JSON.stringify(await admin.from('items').select()));\n});`,
+    'supabase/functions/ef-proxy/index.ts': `Deno.serve(async (req) => {\n  const { url, method } = await req.json();\n  const res = await fetch(url, { method });\n  return new Response(await res.text());\n});`,
+    'supabase/functions/ef-fixed/index.ts': `Deno.serve(async (req) => {\n  const body = await req.json();\n  return fetch('https://api.example.com/v1/' + encodeURIComponent(body.id));\n});`,
+    'supabase/functions/ef-proxy2/index.ts': `Deno.serve(async (req) => {\n  const body = await req.json();\n  return fetch(new URL(body.target));\n});`,
+  });
+  const f = fp(r);
+  assert.ok(f.has('edge-service-role-before-auth:ef-admin'));
+  assert.ok(!f.has('edge-service-role-before-auth:ef-safe'));
+  assert.ok(f.has('edge-request-controlled-fetch:ef-proxy'));
+  assert.ok(f.has('edge-request-controlled-fetch:ef-proxy2'));
+  assert.ok(!f.has('edge-request-controlled-fetch:ef-fixed'));
+  assert.ok(r.findings.filter((x) => x.rule.startsWith('edge-')).every((x) => x.tier === 'review'));
+});

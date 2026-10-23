@@ -201,4 +201,27 @@ export const coreRules = [
       });
     },
   },
+  {
+    id: 'edge-service-role-before-auth',
+    level: 'warning',
+    tier: 'review',
+    title: 'Edge functions that use a service_role client before any auth check',
+    why: 'A service_role / secret-key client bypasses RLS and grants. In these functions it is used before (or without) anything that looks like an auth or signature check (`auth.getUser`, `getClaims`, JWT or webhook signature verification, a `require*`/`authorize*` helper). Check that the caller is authorised before the privileged query. Text-based heuristic: a review item.',
+    run({ graph }) {
+      return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && n.serviceBeforeAuth)
+        .map((n) => ({ id: n.label, node: n.id, at: n.serviceBeforeAuth.at,
+          note: [n.serviceBeforeAuth.auth ? `first auth check at ${n.serviceBeforeAuth.auth}` : 'no auth check found in the function', n.verifyJwt === false ? 'verify_jwt = false: anyone can call it' : null].filter(Boolean).join('; ') }));
+    },
+  },
+  {
+    id: 'edge-request-controlled-fetch',
+    level: 'warning',
+    tier: 'review',
+    title: 'Edge functions that fetch a URL taken from the request body',
+    why: 'The URL passed to `fetch()` comes from the request body, so a caller can make the function request any host, including internal ones (server-side request forgery). Allow-list the host, or build the URL from a fixed base. Text-based heuristic: a review item.',
+    run({ graph }) {
+      return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && n.requestFetch)
+        .map((n) => ({ id: n.label, node: n.id, at: n.requestFetch.at, message: n.requestFetch.expr }));
+    },
+  },
 ];
