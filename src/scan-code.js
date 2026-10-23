@@ -501,7 +501,15 @@ function analyzer(sf, file, configWrappers, project) {
    * privileged factory, or when every call in this file passes a privileged client. Else a guess
    * from its name.
    */
+  const paramClients = new Map();
   function paramClient(decl, d) {
+    if (paramClients.has(decl.param)) return paramClients.get(decl.param);
+    paramClients.set(decl.param, nameKind(ts.isIdentifier(decl.param.name) ? decl.param.name.text : '')); // recursion guard
+    const r = paramClientOf(decl, d);
+    paramClients.set(decl.param, r);
+    return r;
+  }
+  function paramClientOf(decl, d) {
     const p = decl.param;
     const guess = nameKind(ts.isIdentifier(p.name) ? p.name.text : '');
     if (d > 8) return guess;
