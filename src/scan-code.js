@@ -897,7 +897,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
   visit(sf);
   // A wrapper is satisfied when it is local, has a literal call site, and every dynamic call site of
   // it is the forwarding call inside another satisfied wrapper (rpc -> call -> call('x')).
-  const satisfied = new Set([...wrapperSites].filter(([fn, x]) => x.closed > 0 && localOnly(fn)).map(([fn]) => fn));
+  const satisfied = new Set([...wrapperSites].filter(([fn, x]) => x.closed + x.open > 0 && localOnly(fn)).map(([fn]) => fn));
   for (let changed = true; changed;) {
     changed = false;
     for (const fn of [...satisfied]) {

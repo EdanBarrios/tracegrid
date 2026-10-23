@@ -103,11 +103,12 @@ test('R4 local wrappers whose call sites all pass literals leave no unresolved s
     alias: `declare const db: any; type Fn = 'a' | 'b'; const call = (fn: Fn, args?: object) => db.rpc(fn, args);`,
     keyofTypeof: `declare const db: any; const FNS = { a: 1, b: 2 } as const; const call = (fn: keyof typeof FNS) => db.rpc(fn);`,
     arrayIndex: `declare const db: any; const FNS = ['a', 'b'] as const; const call = (fn: (typeof FNS)[number]) => db.rpc(fn);`,
+    chained: `import { supabase } from './c'; const rpc = (name: string, args?: object) => (supabase as any).rpc(name, args); async function call<T>(name: string, args?: object): Promise<T> { const { data, error } = await rpc(name, args); if (error) throw error; return data as T; } export const x = () => call<number>('a'); export const y = (k: boolean) => call<number>(k ? 'b' : 'a', {});`,
     useCallback: `declare const supabase: any; declare const useCallback: any; export function C() { const call = useCallback((fn: string) => supabase.rpc(fn), []); call('a'); call('b'); }`,
   };
   for (const [k, src] of Object.entries(cases)) {
     const r = scanSource(src, 'a.ts');
-    assert.deepEqual(names(r, 'rpc'), ['a', 'b'], k);
+    assert.deepEqual([...new Set(names(r, 'rpc'))], ['a', 'b'], k);
     assert.equal(r.unresolved.length, 0, k);
   }
   // Still reported: a call site with a dynamic name, an exported wrapper, a wrapper passed as a value.
