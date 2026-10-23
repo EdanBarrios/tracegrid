@@ -42,6 +42,15 @@ projects: re-run `--update-baseline` after reviewing them.
   a dump or `scripts/`) have unknown RLS: `client-table-without-rls` reports them as Review with
   low confidence instead of Fix, and a notice names the likely schema file. On the benchmark this
   removed 26 false Fix findings in two repositories.
+- `exposedSchemas` defaults to `[api] schemas` in `supabase/config.toml` (multi-line TOML arrays
+  are now parsed), so rules see functions and tables in every schema the Data API serves.
+  Supabase's own `pgmq_public` and `graphql_public` are never reported as uncalled.
+- A table or RPC name missing from `public` but defined in another exposed schema is linked to it
+  as ambiguous instead of reported as `unknown-table` / `missing-rpc` (clients bound to a schema
+  through factories, objects of clients or `SupabaseClient<_, "schema">`). On the benchmark this
+  removed 57 false Review findings in one repository.
+- A URL whose name continues with a runtime part (`/rest/v1/rpc/get_${kind}`,
+  `/functions/v1/report-` + kind) is a name pattern, not a call to the literal prefix.
 
 ### Analysis fixes (final pre-launch round)
 - Functions named in a `DO` block that creates or alters policies with `EXECUTE format(...)`

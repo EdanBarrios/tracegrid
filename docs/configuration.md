@@ -84,6 +84,10 @@ dropped**. A `// tracegrid: names a,b` comment above the call or its wrapper res
 Every ignore and entry point needs a `reason`; a bare string is a config error. Unknown keys
 warn. Paths must stay inside the project. `ignore` also has `edgeFunctions`, `tables` and
 `rpcs` lists. `migrations` and `functionsDir` override the auto-detected directories.
+`exposedSchemas` (the schemas the Data API serves) defaults to `[api] schemas` in
+`supabase/config.toml`, else `["public"]`. A call to a name that is not in `public` but exists in
+another exposed schema is linked to it as ambiguous (the client is probably bound to that schema
+through a factory or type the scan cannot follow) instead of being reported missing.
 `sarifLevels` (default `{ "fix": "error", "review": "warning", "info": "note" }`) sets the
 SARIF and GitHub annotation level per tier; `"none"` drops a tier's annotations.
 

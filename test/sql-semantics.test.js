@@ -524,3 +524,49 @@ test('S-ext-3 a table created in the migrations with RLS off stays Fix and gets 
   assert.deepEqual(r.findings.filter((x) => x.rule === 'client-table-without-rls').map((x) => [x.id, x.tier]), [['contacts', 'fix']]);
   assert.ok(!r.notices.some((n) => /never created there/.test(n)));
 });
+
+test('S-schema-1 a name missing from public but defined in another exposed schema links there ambiguously, not missing', async () => {
+  const r = await run(`create schema shop;
+create table shop.store (id int);
+alter table shop.store enable row level security;
+create function shop.restock(n int) returns void language sql as $$ select 1 $$;`, {
+    code: { 'src/a.ts': `import { supabase } from './c';\nexport const a = () => supabase.from('store').select('*');\nexport const b = () => supabase.rpc('restock', { n: 1 });\n` },
+    config: { exposedSchemas: ['public', 'shop'] },
+  });
+  assert.deepEqual(ids(r, 'unknown-table'), []);
+  assert.deepEqual(ids(r, 'missing-rpc'), []);
+  const e = r.links.filter((l) => l.source === 'file:src/a.ts').map((l) => [l.target, l.confidence]).sort();
+  assert.deepEqual(e, [['fn:shop.restock/1', 'ambiguous'], ['table:shop.store', 'ambiguous']]);
+});
+
+test('S-schema-2 a name in neither public nor any other schema is still reported', async () => {
+  const r = await run(`create schema shop;\ncreate table shop.store (id int);`, { code: from('stor') });
+  assert.deepEqual(ids(r, 'unknown-table'), ['stor']);
+});
+
+test('S-schema-3 exposed schemas default to config.toml [api] schemas (multi-line array)', async () => {
+  const r = await run(`create schema shop;\ncreate table shop.store (id int);`, {
+    code: { ...from('store'), 'supabase/config.toml': '[api]\nschemas = [\n  "public", # default\n  "shop",\n]\n' },
+  });
+  assert.deepEqual(ids(r, 'unknown-table'), []);
+});
+
+test('S-schema-4 a table in a schema the Data API does not expose is still unknown to a public client', async () => {
+  const r = await run(`create schema private;\ncreate table private.store (id int);`, { code: from('store') });
+  assert.deepEqual(ids(r, 'unknown-table'), ['store']);
+});
+
+test('S-schema-5 a weak call (receiver not provably Supabase) still counts as a possible caller in another exposed schema', async () => {
+  const sql = `create schema shop;\ngrant usage on schema shop to anon, authenticated;\ncreate function shop.restock(n int) returns void language sql security definer as $$ select 1 $$;`;
+  const config = { exposedSchemas: ['public', 'shop'] };
+  const called = await run(sql, { config, code: { 'src/a.ts': `declare const db: any;\nexport const a = () => db.rpc('restock', { n: 1 });\n` } });
+  assert.deepEqual(ids(called, 'exposed-uncalled-function'), []);
+  const uncalled = await run(sql, { config, code: { 'src/a.ts': `export const a = 1;\n` } });
+  assert.deepEqual(ids(uncalled, 'exposed-uncalled-function'), ['shop.restock/1']);
+});
+
+test('S-schema-6 Supabase platform schemas (Queues, GraphQL) are not the app\'s uncalled functions', async () => {
+  const r = await run(`create schema pgmq_public;\ngrant usage on schema pgmq_public to anon, authenticated;\ncreate function pgmq_public.pop(q text) returns void language sql as $$ select 1 $$;`,
+    { config: { exposedSchemas: ['public', 'pgmq_public'] }, code: { 'src/a.ts': `export const a = 1;\n` } });
+  assert.deepEqual(ids(r, 'exposed-uncalled-function'), []);
+});

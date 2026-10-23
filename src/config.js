@@ -71,6 +71,7 @@ export function loadConfig(root, file) {
   // Keys that could reach an object's prototype are dropped while parsing.
   try { user = JSON.parse(fs.readFileSync(p, 'utf8'), (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v)); } catch (e) { throw new ConfigError(`${p}: ${e.message}`); }
   if (!user || typeof user !== 'object' || Array.isArray(user)) throw new ConfigError(`${p}: expected a JSON object`);
+  Object.defineProperty(c, '_userKeys', { value: new Set(Object.keys(user)), enumerable: false });
   const plugins = Array.isArray(user.plugins) && user.plugins.length > 0;
   for (const k of Object.keys(user)) {
     if (!Object.prototype.hasOwnProperty.call(DEFAULTS, k)) {

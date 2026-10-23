@@ -64,8 +64,9 @@ export function readToml(file) {
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
   let cur = out;
-  for (const raw of text.split(/\r\n|\r|\n/)) {
-    const line = raw.replace(/^\s+/, '');
+  const lines = text.split(/\r\n|\r|\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/^\s+/, '');
     if (!line || line.startsWith('#')) continue;
     const sec = /^\[([^\]]+)\]\s*(#.*)?$/.exec(line);
     if (sec) {
@@ -80,7 +81,14 @@ export function readToml(file) {
     }
     const kv = /^("?)([\w.-]+)\1\s*=\s*(.*)$/.exec(line);
     if (!kv || kv[2] === '__proto__') continue;
-    cur[kv[2]] = tomlValue(kv[3].trim());
+    let v = kv[3].trim();
+    // Multi-line array: join lines (comments stripped) until the brackets balance.
+    if (v.startsWith('[')) {
+      const depth = (x) => { const bare = x.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '').replace(/#.*$/, ''); return (bare.match(/\[/g) || []).length - (bare.match(/\]/g) || []).length; };
+      let d = depth(v);
+      while (d > 0 && i + 1 < lines.length) { const next = lines[++i]; d += depth(next); v += ' ' + next.replace(/#.*$/, ''); }
+    }
+    cur[kv[2]] = tomlValue(v);
   }
   return out;
 }

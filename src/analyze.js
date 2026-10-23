@@ -91,6 +91,9 @@ export async function analyze(root, opts = {}) {
     } else plugins = await loadPlugins(cfg._dir || root, listed, { root });
   }
   const project = resolveProject(root, cfg);
+  // Exposed schemas: the config wins, else config.toml [api] schemas (what PostgREST serves).
+  const tomlSchemas = project.toml && project.toml.api && project.toml.api.schemas;
+  if (!(cfg._userKeys && cfg._userKeys.has('exposedSchemas')) && Array.isArray(tomlSchemas) && tomlSchemas.length) cfg.exposedSchemas = [...new Set(tomlSchemas)];
   const files = findFiles(root, cfg.include, cfg.exclude, { outputDirs: cfg.outputDirs || [] });
   const code = scanFiles(root, files, cfg.wrappers);
   // Grant model. "auto" (the default): config.toml [api] auto_expose_new_tables when set, else legacy
@@ -242,6 +245,14 @@ export async function analyze(root, opts = {}) {
   const fnByBare = new Map();
   for (const f of catalog.functions) { const b = f.name.split('.').pop(); if (!fnByBare.has(b)) fnByBare.set(b, []); fnByBare.get(b).push(`fn:${f.key}`); }
   const tableExists = (n) => nodes.has(`table:${n}`) && !nodes.get(`table:${n}`).missing;
+  // A name not in public that exists in other exposed schemas: the client is probably bound to one of them
+  // in a way the scan cannot follow (a factory, an object of clients, a SupabaseClient<_, "schema">
+  // type). Link ambiguously instead of reporting it missing.
+  const exposedOther = new Set((cfg.exposedSchemas || ['public']).filter((x) => x !== 'public'));
+  const tablesByBare = new Map();
+  for (const t of [...catalog.tables, ...catalog.views]) if (exposedOther.has(schemaOf(t.name))) push(tablesByBare, t.name.split('.').pop(), t.name);
+  const fnElsewhere = new Map();
+  for (const f of catalog.functions) if (exposedOther.has(schemaOf(f.name))) push(fnElsewhere, f.name.split('.').pop(), `fn:${f.key}`);
   const selects = [];
   for (const c of code.calls) {
     const caller = callerOf(c.file);
@@ -249,10 +260,17 @@ export async function analyze(root, opts = {}) {
     const fileNode = () => { if (caller.id.startsWith('file:')) node(caller.id, 'file', c.file, { side: caller.side }); };
     if (c.kind === 'select') { selects.push({ c, caller, at }); continue; }
     if (c.kind === 'rpc') {
-      const targets = c.anySchema ? (fnByBare.get(c.name.split('.').pop()) || []) : (c.weak ? fnIdsByName.get(c.name) || [] : fnTargets(c.name));
+      const elsewhere = !c.anySchema && !c.name.includes('.') && !fnIdsByName.has(c.name) ? fnElsewhere.get(c.name) : null;
+      const targets = elsewhere || (c.anySchema ? (fnByBare.get(c.name.split('.').pop()) || []) : (c.weak ? fnIdsByName.get(c.name) || [] : fnTargets(c.name)));
       if (targets.length) fileNode();
-      for (const t of targets) edge(caller.id, t, rel('rpc', c), c.weak ? 'ambiguous' : c.confidence, at);
+      for (const t of targets) edge(caller.id, t, rel('rpc', c), c.weak || elsewhere ? 'ambiguous' : c.confidence, at);
     } else if (c.kind === 'table') {
+      const elsewhere = !c.anySchema && !c.name.includes('.') && !tableExists(c.name) ? tablesByBare.get(c.name) : null;
+      if (elsewhere) {
+        fileNode();
+        for (const t of elsewhere) edge(caller.id, `table:${t}`, 'from-weak', 'ambiguous', at, c.op);
+        continue;
+      }
       if (c.weak || c.anySchema) {
         if (!tableExists(c.name)) continue;
         fileNode();

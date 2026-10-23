@@ -23,9 +23,9 @@ const NOT_SUPABASE_MODULE = /^(knex|kysely|ethers|viem|web3|rxjs|drizzle-orm|@pr
 // SUPABASE_SERVICE_KEY, SUPABASE_SECRET_KEY, SUPABASE_SECRET, serviceRoleKey, sb_secret_...
 const PRIVILEGED_KEY = /service[_-]?role|service[_-]?key|secret[_-]?key|supabase[_-]?secret|sb_secret_/i;
 const PRIVILEGED_NAME = /^(supabaseAdmin|adminClient|admin|adminSupabase|serviceClient|serviceRoleClient|supabaseService|serviceSupabase|supabaseServiceRole)$/;
-const FN_URL = /(?:^|\/)functions\/v1\/([A-Za-z0-9_-]+)/g;
-const REST_RPC = /\/rest\/v1\/rpc\/([A-Za-z_][\w]*)/g;
-const REST_TABLE = /\/rest\/v1\/(?!rpc\/)([A-Za-z_][\w]*)/g;
+const FN_URL = /(?:^|\/)functions\/v1\/([A-Za-z0-9_-]+)(?![\w\u0000-])/g;
+const REST_RPC = /\/rest\/v1\/rpc\/([A-Za-z_][\w]*)(?![\w\u0000])/g;
+const REST_TABLE = /\/rest\/v1\/(?!rpc\/)([A-Za-z_][\w]*)(?![\w\u0000])/g;
 const UNKNOWN = '\u0000';
 const MAX_VALUES = 64;
 
@@ -873,7 +873,11 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       for (const m of t.matchAll(FN_URL)) { hit = true; calls.push({ kind: 'invoke', name: m[1], file, line, confidence: conf, via: 'url' }); }
       for (const m of t.matchAll(REST_RPC)) { hit = true; calls.push({ kind: 'rpc', name: m[1], file, line, confidence: conf, via: 'url' }); }
       for (const m of t.matchAll(REST_TABLE)) { hit = true; calls.push({ kind: 'table', name: m[1], file, line, confidence: conf, via: 'url', op: 'rest' }); }
-      if (new RegExp(`(?:^|/)functions/v1/${UNKNOWN}`).test(t)) dyn = true;
+      if (new RegExp(`(?:^|/)functions/v1/[A-Za-z0-9_-]*${UNKNOWN}`).test(t)) dyn = true;
+      // A literal prefix followed by a runtime part (`/rest/v1/rpc/report_${kind}`) is a pattern, not a name.
+      for (const [re, kind] of [[/\/rest\/v1\/rpc\/([A-Za-z_]\w*)\u0000/g, 'rpc'], [/\/rest\/v1\/(?!rpc\/)([A-Za-z_]\w*)\u0000/g, 'table']]) {
+        for (const m of t.matchAll(re)) unresolved.push({ kind, file, line, expr: short(n.getText(sf)), ...(m[1].length >= 3 ? { pattern: `^${escRe(m[1])}.*$` } : {}) });
+      }
     }
     if (dyn || (!hit && /functions\/v1\/\u0000/.test(joined))) {
       const pre = texts.map((t) => (new RegExp(`functions/v1/([A-Za-z0-9_-]*)${UNKNOWN}`).exec(t) || [])[1]).find((x) => x);

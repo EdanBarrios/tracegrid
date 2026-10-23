@@ -16,9 +16,11 @@ const callers = (graph, id) => graph.incoming(id).filter((e) => e.source !== id)
 /** Callers that justify a grant to anon/authenticated: everything except service_role / secret-key clients. */
 const roleCallers = (graph, id) => callers(graph, id).filter((e) => !e.relation.endsWith('-service'));
 const exposed = (config) => new Set(config.exposedSchemas || ['public']);
+/** Exposed schemas Supabase itself creates (Queues, GraphQL); their functions are the platform's API, not the app's. */
+const PLATFORM_SCHEMAS = new Set(['pgmq_public', 'graphql_public']);
 /** Functions in an exposed schema that anon or authenticated can execute. */
 const grantedFunctions = (graph, config) => graph.nodes.filter((n) => n.type === 'function' && !n.missing && n.kind === 'function'
-  && !n.triggerOnly && exposed(config).has(n.schema || 'public') && (n.anon || n.authenticated));
+  && !n.triggerOnly && exposed(config).has(n.schema || 'public') && !PLATFORM_SCHEMAS.has(n.schema) && (n.anon || n.authenticated));
 /**
  * Unresolved (dynamic-name) call sites of a kind that could reach `name`. A site with a known
  * name pattern (`fn_${x}`) only counts for names matching it.

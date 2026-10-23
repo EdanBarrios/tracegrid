@@ -119,3 +119,15 @@ test('R4 local wrappers whose call sites all pass literals leave no unresolved s
     `declare const db: any; declare const use: any; const call = (fn: string) => db.rpc(fn); call('a'); use(call);`,
   ]) assert.ok(scanSource(src, 'a.ts').unresolved.some((u) => u.wrapper === 'call'), src);
 });
+
+test('a URL name with a runtime suffix is a pattern, not a name', () => {
+  for (const [src, kind, pattern] of [
+    ['declare const run: string; const t = `forms_local_${run}`; fetch(`/rest/v1/${t}?select=id`);', 'table', '^forms_local_.*$'],
+    ['declare const k: string; fetch(`${u}/rest/v1/rpc/get_${k}`);', 'rpc', '^get_.*$'],
+    ['declare const kind: string; fetch(base + "/functions/v1/report-" + kind);', 'invoke', '^report-.*$'],
+  ]) {
+    const r = scanSource(src, 'a.ts');
+    assert.deepEqual(r.calls, [], src);
+    assert.deepEqual(r.unresolved.map((u) => [u.kind, u.pattern]), [[kind, pattern]], src);
+  }
+});
