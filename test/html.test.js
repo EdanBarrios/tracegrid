@@ -190,3 +190,20 @@ test('truncLeft keeps the file name and line, cuts from the left, and is embedde
   assert.ok(h.includes('function truncLeft'), 'helper shipped in the client script');
   assert.ok(h.includes("title:text"), 'full path goes through the title attribute');
 });
+
+test('3D labels: one rAF-driven pass, integer translate3d, culled behind camera / off-screen, stopped when hidden', () => {
+  const { code } = scripts(renderHtml(hostile()));
+  const h = renderHtml(hostile());
+  assert.match(code, /function updateLabels\(\)\{/);
+  assert.match(code, /function frame\(ts\)\{raf=requestAnimationFrame\(frame\);[^]*updateLabels\(\)\}/);
+  assert.match(code, /ctl\.addEventListener\('change',updateLabels\)/);
+  assert.match(code, /translate3d\('\+tx\+'px,'\+ty\+'px,0\)/);
+  assert.match(code, /Math\.round\(p\.x\)/);
+  assert.match(code, /if\(d<=1\)return/); // behind the camera
+  assert.match(code, /x<0\|\|y<0\|\|x>W\|\|y>H/); // off-screen
+  assert.match(code, /document\.hidden\)\{if\(raf\)\{cancelAnimationFrame\(raf\)/);
+  assert.match(h, /#three-labels div\{[^}]*will-change:transform/);
+  assert.doesNotMatch(code, /el\.style\.left=/);
+  // The ?debug hook exposes per-frame label positions for the headless-browser check.
+  assert.match(code, /__tg3d=\{[^]*labels:function\(\)/);
+});

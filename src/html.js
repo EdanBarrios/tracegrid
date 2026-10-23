@@ -287,7 +287,7 @@ table.mx .na{color:var(--line2);display:block}
 #three{position:absolute;inset:0;background:var(--3d-bg)}#three-canvas{position:absolute;inset:0}
 #three-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
 #three-crumb{position:absolute;left:12px;top:10px;z-index:2;font:var(--fs-small) var(--font);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:3px 8px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#three-crumb a{cursor:pointer;text-decoration:underline}
-#three-labels div{position:absolute;transform:translate(-50%,-150%);font:var(--fs-label) var(--font);color:var(--3d-label);white-space:nowrap;text-shadow:0 0 6px var(--3d-bg),0 0 2px var(--3d-bg);opacity:.9}
+#three-labels div{position:absolute;left:0;top:0;will-change:transform;visibility:hidden;font:var(--fs-label) var(--font);color:var(--3d-label);white-space:nowrap;text-shadow:0 0 6px var(--3d-bg),0 0 2px var(--3d-bg);opacity:.9}
 #three-labels div.fix{color:var(--fix)}#three-labels div.review{color:var(--review)}
 #three-msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:12px 16px;z-index:3;max-width:80%;text-align:center}
 .scene-tooltip .tip{font:var(--fs-small) var(--font);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:3px 8px}
@@ -786,7 +786,7 @@ function start3d(){msg(null);pal();build3d();var el=$('three-canvas');
     .onNodeClick(function(n){var fs=byNode.get(n.id);if(fs)selectFinding(fs[0]);else if(byId.has(n.id))selectNode(n.id);else fly3d(n.id)})
     .graphData({nodes:nodes3,links:links3});
   }catch(e){msg('3D view could not start ('+String(e&&e.message||e)+'); the 2D views still work.');G3=null;return}
-  var ctl=G3.controls();if(ctl){ctl.autoRotate=look.rot;ctl.autoRotateSpeed=0.45}
+  var ctl=G3.controls();if(ctl){ctl.autoRotate=look.rot;ctl.autoRotateSpeed=0.45;if(ctl.addEventListener)ctl.addEventListener('change',updateLabels)}
   ['pointerdown','wheel','touchstart'].forEach(function(t){el.addEventListener(t,function(){interacted=true;var c=G3&&G3.controls();if(c)c.autoRotate=false;idle3()},{passive:true})});
   el.addEventListener('dblclick',function(){if(!hover3)overview3d()});
   window.addEventListener('resize',function(){if(G3&&state.view==='3d')G3.width(el.clientWidth).height(el.clientHeight)});
@@ -818,20 +818,36 @@ function stars(){try{if(!grab())return;var geo=new K.Sphere(1.2,4,3);var mat=new
 function halos(){try{if(!grab())return;var geo=new K.Sphere(1,16,12);var mats={};
   labelled.forEach(function(n){var obj=n.__threeObj;if(!obj)return;var c=base3(n);var m=mats[c];if(!m){m=new K.Mat({color:c,transparent:true,opacity:0.2,depthWrite:false});if(m.emissive)m.emissive.set(c);m.blending=2;m.__sr=true;mats[c]=m}
     haloList.push({n:n,m:m});var halo=new K.Mesh(geo,m);var r=shaped?2.4:Math.cbrt(val3(n))*3*2.4;halo.scale.set(r,r,r);halo.__halo=true;obj.add(halo)})}catch(e){/* decorative only */}}
-var labelEls=new Map();
+var labelEls=new Map(),labelPos=[],shown3=new Set();
+/* Overlay labels: one pass per rendered frame and on every orbit-control change, so they never lag the canvas.
+   Each label is one integer-pixel translate3d (no left/top reflow); hidden when behind the camera or outside the view. */
+function updateLabels(){
+  if(!G3||!nodes3)return;var box=$('three-labels');var cam=G3.camera(),ctl=G3.controls();if(!cam)return;var tgt=ctl&&ctl.target?ctl.target:{x:0,y:0,z:0};
+  var W=box.clientWidth,H=box.clientHeight;
+  var fx=tgt.x-cam.position.x,fy=tgt.y-cam.position.y,fz=tgt.z-cam.position.z;var fl=Math.hypot(fx,fy,fz)||1;
+  var show=labelled;if(hl)show=nodes3.filter(function(n){return hl.has(n.id)}).slice(0,30);
+  /* findings first, then the rest; within a rank, labels shown last frame keep their slot so overlaps do not flip-flop */
+  var rank=function(n){return (n.tier==='fix'?0:2)+(shown3.has(n.id)?0:1)};
+  show=show.map(function(n,i){return{n:n,i:i}}).sort(function(a,b){return rank(a.n)-rank(b.n)||a.i-b.i}).map(function(o){return o.n});
+  var keep=new Set(),placed=[],out=[];
+  show.forEach(function(n){if(n.x==null||!isFinite(n.x+n.y+n.z))return;
+    var d=((n.x-cam.position.x)*fx+(n.y-cam.position.y)*fy+(n.z-cam.position.z)*fz)/fl;if(d<=1)return; /* behind (or on) the camera plane */
+    var p=G3.graph2ScreenCoords(n.x,n.y,n.z);if(!p||!isFinite(p.x)||!isFinite(p.y))return;
+    var x=Math.round(p.x),y=Math.round(p.y);if(x<0||y<0||x>W||y>H)return; /* off-screen */
+    var fade=Math.max(0,Math.min(1,(2.6-d/fl)/1.6)); /* far labels fade out instead of popping; nothing is hidden by distance alone until they are invisible */
+    if(fade<=0.02)return;
+    var w=Math.min(36,String(n.label).length)*6.2,bx={x0:x-w/2,x1:x+w/2,y0:y-24,y1:y-8};
+    if(placed.some(function(b){return bx.x0<b.x1&&bx.x1>b.x0&&bx.y0<b.y1&&bx.y1>b.y0}))return;placed.push(bx);
+    var el=labelEls.get(n.id);if(!el){el=document.createElement('div');el.textContent=(GLY[n.tier]?GLY[n.tier]+' ':'')+short(n.label,36);if(n.tier==='fix'||n.tier==='review')el.className=n.tier;el.style.display='block';box.appendChild(el);el._w=el.offsetWidth;el._h=el.offsetHeight;el._hid=true;labelEls.set(n.id,el)}
+    var tx=Math.round(x-el._w/2),ty=Math.round(y-el._h-6),op=(0.9*fade).toFixed(2);
+    el.style.transform='translate3d('+tx+'px,'+ty+'px,0)';if(el._op!==op){el.style.opacity=op;el._op=op}if(el._hid){el.style.visibility='visible';el._hid=false}
+    keep.add(n.id);out.push({id:n.id,x:tx,y:ty,opacity:+op})});
+  labelEls.forEach(function(el,id){if(!keep.has(id)&&!el._hid){el.style.visibility='hidden';el._hid=true}});
+  shown3=keep;labelPos=out}
 function frame(ts){raf=requestAnimationFrame(frame);if(!G3)return;if(ts-lastPatch>500){patch();lastPatch=ts}
   var pulse=1+0.22*Math.sin(ts/420);nodes3.forEach(function(n){if(n.tier==='fix'&&n.__threeObj){var k=(shaped&&n.__s?n.__s:1)*pulse;n.__threeObj.scale.set(k,k,k)}});
-  var box=$('three-labels');var cam=G3.camera(),ctl=G3.controls();var tgt=ctl&&ctl.target?ctl.target:{x:0,y:0,z:0};
-  var fx=tgt.x-cam.position.x,fy=tgt.y-cam.position.y,fz=tgt.z-cam.position.z;
-  var show=labelled;if(hl)show=nodes3.filter(function(n){return hl.has(n.id)}).slice(0,30);
-  var keep=new Set(),placed=[];
-  show.forEach(function(n){if(n.x==null)return;var d=(n.x-cam.position.x)*fx+(n.y-cam.position.y)*fy+(n.z-cam.position.z)*fz;if(d<=0)return;var p=G3.graph2ScreenCoords(n.x,n.y,n.z);
-    /* greedy collision avoidance: findings first (they come first in the list), then hubs */
-    var w=Math.min(36,String(n.label).length)*6.2,bx={x0:p.x-w/2,x1:p.x+w/2,y0:p.y-24,y1:p.y-8};
-    if(placed.some(function(b){return bx.x0<b.x1&&bx.x1>b.x0&&bx.y0<b.y1&&bx.y1>b.y0}))return;placed.push(bx);
-    var el=labelEls.get(n.id);if(!el){el=document.createElement('div');el.textContent=(GLY[n.tier]?GLY[n.tier]+' ':'')+short(n.label,36);if(n.tier==='fix'||n.tier==='review')el.className=n.tier;box.appendChild(el);labelEls.set(n.id,el)}
-    el.style.left=p.x+'px';el.style.top=p.y+'px';el.style.display='block';keep.add(n.id)});
-  labelEls.forEach(function(el,id){if(!keep.has(id))el.style.display='none'})}
+  updateLabels()}
+document.addEventListener('visibilitychange',function(){if(document.hidden){if(raf){cancelAnimationFrame(raf);raf=0}}else if(G3&&state.view==='3d')resume3d()});
 function resume3d(){if(!raf)raf=requestAnimationFrame(frame);if(G3&&G3.resumeAnimation)G3.resumeAnimation()}
 function pause3d(){if(raf){cancelAnimationFrame(raf);raf=0}if(G3&&G3.pauseAnimation)G3.pauseAnimation()}
 var hover3=null,idleT=0;
@@ -844,7 +860,7 @@ function fly3d(id){if(!G3||!nodes3)return;var n=nodes3.find(function(x){return x
   refresh3d();crumb3();var c=G3.controls();if(c){c.autoRotate=false;c.enabled=true}clearTimeout(idleT);var dist=170,r=Math.hypot(n.x,n.y,n.z)||1,k=1+dist/r;G3.cameraPosition({x:n.x*k,y:n.y*k,z:n.z*k},{x:n.x,y:n.y,z:n.z},1000);settle3(function(){return{x:n.x,y:n.y,z:n.z}},1050)}
 /* After a transition, make sure the orbit controls are live and orbit the given point. */
 function settle3(pt,ms){setTimeout(function(){var c=G3&&G3.controls();if(!c)return;c.enabled=true;if(c.target&&c.target.set){var p=pt();c.target.set(p.x,p.y,p.z)}if(c.update)c.update()},ms)}
-if(/[?&]debug\b/.test(location.search))window.__tg3d={cameraDistance:function(){var c=G3.camera(),t=G3.controls().target;return Math.hypot(c.position.x-t.x,c.position.y-t.y,c.position.z-t.z)},target:function(){var t=G3.controls().target;return[t.x,t.y,t.z]},enabled:function(){return G3.controls().enabled},autoRotate:function(){return G3.controls().autoRotate},selected:function(){return hlId},select:function(i){selectFinding(D.findings[i||0])},zoom:function(d){var c=G3.controls();c.dollyIn?c.dollyIn(d):0;c.update()},ready:function(){return !!G3&&nodes3.some(function(n){return n.x!=null})}};
+if(/[?&]debug\b/.test(location.search))window.__tg3d={cameraDistance:function(){var c=G3.camera(),t=G3.controls().target;return Math.hypot(c.position.x-t.x,c.position.y-t.y,c.position.z-t.z)},target:function(){var t=G3.controls().target;return[t.x,t.y,t.z]},enabled:function(){return G3.controls().enabled},autoRotate:function(){return G3.controls().autoRotate},selected:function(){return hlId},select:function(i){selectFinding(D.findings[i||0])},zoom:function(d){var c=G3.controls();c.dollyIn?c.dollyIn(d):0;c.update()},labels:function(){return labelPos.slice()},orbit:function(a){var c=G3.camera(),t=G3.controls().target,dx=c.position.x-t.x,dz=c.position.z-t.z,co=Math.cos(a),si=Math.sin(a);c.position.x=t.x+dx*co-dz*si;c.position.z=t.z+dx*si+dz*co;c.lookAt(t.x,t.y,t.z);G3.controls().update();updateLabels();return labelPos.slice()},ready:function(){return !!G3&&nodes3.some(function(n){return n.x!=null})}};
 function reset3d(){if(!G3)return;hl=null;hlId=null;refresh3d();crumb3();fit3d(800);idle3()}
 /* Fit the camera to the densest 90% of nodes: a few far-flung ones would otherwise shrink everything else. */
 function fit3d(ms){var pts=nodes3.filter(function(n){return n.x!=null});if(!pts.length)return;var c={x:0,y:0,z:0};pts.forEach(function(n){c.x+=n.x;c.y+=n.y;c.z+=n.z});c.x/=pts.length;c.y/=pts.length;c.z/=pts.length;
