@@ -9,8 +9,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Supabase · Firebase next](https://img.shields.io/badge/Supabase-Firebase%20next-3ecf8e)
 
-<img src="docs/dashboard.png" alt="tracegrid dashboard for the bundled demo app" width="900">
-<!-- <img src="docs/tracegrid.gif" alt="tracegrid walkthrough" width="900"> -->
+<img src="docs/tracegrid.gif" alt="tracegrid: dashboard, path view and 3D map of the bundled demo app" width="900">
 
 </div>
 
