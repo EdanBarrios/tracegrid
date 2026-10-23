@@ -137,22 +137,36 @@ function gatesOf(text, sharedHelpers) {
   return out.sort((a, b) => a.line - b.line);
 }
 
-/** Text of `file` plus the files it imports through relative paths, up to three hops. */
-function reachableText(root, file, files, seen = new Set(), depth = 0) {
-  if (seen.has(file) || depth > 3) return '';
-  seen.add(file);
-  let text;
-  try { const st = fs.statSync(path.join(root, file)); if (st.size > MAX_SOURCE_FILE) return ''; text = mask(fs.readFileSync(path.join(root, file), 'utf8')); } catch { return ''; }
-  let all = text;
+/** Masked text of a project file, or null when unreadable or too large. */
+function readMasked(root, file) {
+  try { const st = fs.statSync(path.join(root, file)); if (st.size > MAX_SOURCE_FILE) return null; return mask(fs.readFileSync(path.join(root, file), 'utf8')); } catch { return null; }
+}
+
+/** Files `text` (in `file`) imports through relative paths. */
+function relativeImports(file, text, files) {
+  const out = [];
   for (const m of text.matchAll(/\bfrom\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
     const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1]));
     const hit = [target, target + '.ts', target + '.tsx', target + '.js', target + '/index.ts'].find((c) => files.includes(c));
-    if (hit) all += '\n' + reachableText(root, hit, files, seen, depth + 1);
+    if (hit) out.push(hit);
   }
-  return all;
+  return out;
 }
-/** The function (own files plus what they import) hashes a request token with sha-256 and compares in constant time. */
-const tokenCapability = (text) => SHA256.test(text) && CONST_TIME.test(text) && TOKEN_SOURCE.test(text);
+
+/**
+ * A token capability endpoint: some file reachable from `file` within three import hops hashes with
+ * sha-256 and compares in constant time (the verifier), and the request token is read in the
+ * verifier or a file on the import chain that leads to it. Hash and compare in unrelated files,
+ * or a token read off the verifier's chain, do not count.
+ */
+function tokenCapability(root, file, files, chain = [], tokenSeen = false) {
+  if (chain.length > 3 || chain.includes(file)) return false;
+  const text = readMasked(root, file);
+  if (text == null) return false;
+  const token = tokenSeen || TOKEN_SOURCE.test(text);
+  if (token && SHA256.test(text) && CONST_TIME.test(text)) return true;
+  return relativeImports(file, text, files).some((f) => tokenCapability(root, f, files, [...chain, file], token));
+}
 
 /** Helper names defined in _shared that return a caller-scoped client. */
 function sharedScopedHelpers(root, files) {
@@ -211,7 +225,8 @@ export function edgeHints(root, edgeFns, files, calls) {
       }
     }
     const gatedElsewhere = per.some((p) => p.gate);
-    const capability = tokenCapability(per.map((p) => reachableText(root, p.f, files)).join('\n'));
+    const roots = e.entry && per.some((p) => p.f === e.entry) ? [e.entry] : per.map((p) => p.f);
+    const capability = roots.some((f) => tokenCapability(root, f, files));
     for (const p of per) {
       if (!p.uses.length || h.serviceBeforeAuth || capability) continue;
       const lines = p.text.split('\n');

@@ -35,6 +35,9 @@ projects: re-run `--update-baseline` after reviewing them.
   font is a variable in one THEME block. Nodes carry `privsByRole` and, under the legacy grant
   model, `defaultGrants` (privileges that exist only through Supabase's default grants).
 - New review-tier rules: `edge-service-role-before-auth`, `edge-request-controlled-fetch`.
+  A hashed-token capability counts as a gate only when one file hashes with sha-256 and
+  compares in constant time, and the request token is read on the import chain from the
+  entry point to that file.
 
 ### Analysis fixes (final pre-launch round)
 - Functions named in a `DO` block that creates or alters policies with `EXECUTE format(...)`
@@ -152,7 +155,7 @@ projects: re-run `--update-baseline` after reviewing them.
 - `graph.html`: on graphs over 200 nodes, starts focused on findings and their neighbours with
   files grouped by folder; "show all"; clicking a node expands it; hint on an empty graph.
 - `repository`, `homepage`, `bugs`; Node 20+; SARIF `informationUri` points at the repository.
-- Composite `action.yml`, CI matrix, Claude Code plugin and skill, `docs/AGENTS.md`,
+- Composite `action.yml`, CI matrix, Claude Code plugin and skill, `docs/agents.md`,
   CONTRIBUTING and issue templates.
 
 ## 0.1.0

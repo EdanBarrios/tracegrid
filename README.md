@@ -78,6 +78,6 @@ claude plugin install tracegrid@tracegrid
 - `edge-service-role-before-auth` is a heuristic.
 - Catalog mode (`--db-url`) is tested on macOS and Linux; on Windows it needs psql.exe on PATH.
 
-[Docs](docs/README.md) · [Configuration](docs/configuration.md) · [Rules](docs/rules.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+[Docs](docs/README.md) · [Configuration](docs/configuration.md) · [Rules](docs/rules.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
 Not affiliated with Supabase. MIT © Edan Barrios.

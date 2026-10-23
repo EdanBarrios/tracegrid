@@ -196,3 +196,30 @@ Deno.serve(async (req) => {
   } });
   assert.deepEqual(f.map((x) => x.fingerprint), []);
 });
+
+test('G11b sha-256 and a constant-time compare in unrelated imported files are not a token capability', async () => {
+  const f = await scan(HEAD + `import { etag } from './etag.ts';
+import { sameOrigin } from './origin.ts';
+const admin = createClient(url, serviceKey);
+Deno.serve(async (req) => {
+  const id = new URL(req.url).searchParams.get('id');
+  const { data } = await admin.from('items').select('id').eq('id', id).maybeSingle();
+  return new Response(JSON.stringify(data), { headers: { etag: await etag(data), vary: String(sameOrigin(req)) } });
+});`, { verifyJwt: false, files: {
+    'supabase/functions/fn-under-test/etag.ts': `export async function etag(v: unknown) { return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(v)))); }`,
+    'supabase/functions/fn-under-test/origin.ts': `declare function timingSafeEqual(a: string, b: string): boolean;\nexport const sameOrigin = (r: Request) => timingSafeEqual(r.headers.get('origin') ?? '', 'x');`,
+  } });
+  assert.equal(f.length, 1);
+});
+
+test('G11c a verifier in a file the entry point never imports does not cover the function', async () => {
+  const f = await scan(HEAD + `const admin = createClient(url, serviceKey);
+Deno.serve(async (req) => {
+  const id = new URL(req.url).searchParams.get('id');
+  const { data } = await admin.from('items').select('id').eq('id', id).maybeSingle();
+  return new Response(JSON.stringify(data));
+});`, { verifyJwt: false, files: {
+    'supabase/functions/fn-under-test/old-verify.ts': `declare function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean;\nexport async function ok(r: Request, h: Uint8Array) { const t = r.headers.get('x-t') ?? ''; return timingSafeEqual(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))), h); }`,
+  } });
+  assert.equal(f.length, 1);
+});
