@@ -49,6 +49,12 @@ projects: re-run `--update-baseline` after reviewing them.
   as ambiguous instead of reported as `unknown-table` / `missing-rpc` (clients bound to a schema
   through factories, objects of clients or `SupabaseClient<_, "schema">`). On the benchmark this
   removed 57 false Review findings in one repository.
+- service_role clients are recognised through helpers: functions that return a client (same file
+  or imported, including a cached `let client` assigned inside), a key read into a local variable,
+  client parameters whose every same-file caller passes a privileged client or whose type is
+  `ReturnType<typeof factory>`, and wrappers that take the client as a parameter. A helper that can
+  return a browser client stays a browser caller. On the benchmark this removed 20 false Review
+  findings in one repository.
 - A URL whose name continues with a runtime part (`/rest/v1/rpc/get_${kind}`,
   `/functions/v1/report-` + kind) is a name pattern, not a call to the literal prefix.
 

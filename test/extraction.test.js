@@ -408,3 +408,33 @@ test('R5b edge hints: a verb-named auth helper (verifyCronHeader, requireAuthedU
   assert.ok(!fp(r).has('edge-service-role-before-auth:ef-cron'));
   assert.ok(fp(r).has('edge-service-role-before-auth:ef-open'));
 });
+
+test('F19b service_role clients through helpers: factories (same file, imported, cached), client parameters, wrappers', async () => {
+  const r = await run({
+    'src/lib/supabase.ts': `import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+let cached: SupabaseClient | null = null;
+export function getServerClient() {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return null;
+  if (!cached) cached = createClient(process.env.SUPABASE_URL!, key);
+  return cached;
+}`,
+    'src/admin.ts': `import { getServerClient } from '@/lib/supabase';
+export const a = () => getServerClient()!.from('secrets').select();
+async function write(client: NonNullable<ReturnType<typeof getServerClient>>) { await client.from('secrets').insert({}); }
+async function upsertRows(db: any, table: string) { await db.from(table).upsert([]); }
+export const b = async () => { const s = getServerClient(); await write(s!); await upsertRows(s, 'secrets'); };`,
+  });
+  assert.ok(!fp(r).has('client-table-without-rls:secrets'), 'every caller of secrets uses a service_role client');
+  assert.ok(r.links.filter((l) => l.target === 'table:secrets').every((l) => l.relation.endsWith('-service')), JSON.stringify(r.links.filter((l) => l.target === 'table:secrets')));
+});
+
+test('F19c a helper that may return a browser client, or a parameter given one, stays a browser caller', async () => {
+  const r = await run({
+    'src/a.ts': `import { createClient } from '@supabase/supabase-js';
+function pick(admin: boolean) { if (admin) return createClient('u', process.env.SUPABASE_SERVICE_ROLE_KEY!); return createClient('u', 'anon'); }
+async function read(supabase: any) { await supabase.from('secrets').select(); }
+export const a = () => read(pick(true));`,
+  });
+  assert.ok(fp(r).has('client-table-without-rls:secrets'));
+});

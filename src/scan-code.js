@@ -422,6 +422,8 @@ function analyzer(sf, file, configWrappers, project) {
         if (x && x.type === 'client') k = { t: 'client', strong: true, schema: x.schema, privileged: x.privileged };
       } else if (decl && decl.kind === 'param' && decl.path.length === 1) {
         k = member(nameKind(decl.param.name && ts.isIdentifier(decl.param.name) ? decl.param.name.text : ''), decl.path[0]);
+      } else if (decl && decl.kind === 'param' && !decl.path.length) {
+        k = paramClient(decl, d);
       } else if (decl && decl.kind === 'class') return { t: 'other' };
       if (!k) k = nameKind(e.text);
       if (k && k.t === 'client' && !k.privileged && PRIVILEGED_NAME.test(e.text)) k = { ...k, privileged: true };
@@ -430,8 +432,24 @@ function analyzer(sf, file, configWrappers, project) {
     if (ts.isCallExpression(e)) {
       const c = unwrap(e.expression);
       const name = ts.isIdentifier(c) ? c.text : ts.isPropertyAccessExpression(c) ? c.name.text : null;
+      // A helper that returns a client: `getSupabaseClient()`, same file or imported.
+      if (ts.isIdentifier(c)) {
+        const decl = findDecl(c);
+        const fn = decl && decl.kind === 'fn' ? decl.node
+          : decl && decl.kind === 'var' && decl.decl.initializer && (ts.isArrowFunction(unwrap(decl.decl.initializer)) || ts.isFunctionExpression(unwrap(decl.decl.initializer))) ? unwrap(decl.decl.initializer) : null;
+        const r = fn ? returnKind(fn, d + 1) : null;
+        if (r) return r;
+        const x = decl && decl.kind === 'import' ? lookup(decl) : null;
+        if (x && x.type === 'factory') return { t: 'client', strong: true, schema: x.schema, privileged: x.privileged };
+      }
       if (name && CLIENT_FACTORY.test(name)) {
-        const text = e.arguments.map((a) => a.getText(sf)).join(' ');
+        // The key argument's text, or a local variable's initializer (`const key = env('SUPABASE_SERVICE_ROLE_KEY')`).
+        const argText = (a) => {
+          const u = unwrap(a);
+          const decl = ts.isIdentifier(u) ? findDecl(u) : null;
+          return decl && decl.kind === 'var' && decl.decl.initializer ? `${a.getText(sf)} ${decl.decl.initializer.getText(sf)}` : a.getText(sf);
+        };
+        const text = e.arguments.map(argText).join(' ');
         const opts = e.arguments.find((a) => ts.isObjectLiteralExpression(unwrap(a)));
         const sch = opts ? atPath(opts, ['db', 'schema']) : null;
         const sv = sch ? str(sch) : null;
@@ -456,6 +474,90 @@ function analyzer(sf, file, configWrappers, project) {
     }
     if (ts.isNewExpression(e)) return /supabase/i.test(e.expression.getText(sf)) ? { t: 'client', strong: true } : { t: 'other' };
     return null;
+  }
+  /**
+   * The client a function returns, following `return x` through `x`'s initializer and assignments
+   * (`let c = null; ... c = createClient(...); return c`). Privileged only when every client it can
+   * return is privileged. Null when it returns no recognisable client.
+   */
+  /** Call expressions in this file by callee identifier text. */
+  let callsByName = null;
+  const callsNamed = (name) => {
+    if (!callsByName) {
+      callsByName = new Map();
+      (function walk(n) {
+        if (ts.isCallExpression(n) && ts.isIdentifier(unwrap(n.expression))) {
+          const t = unwrap(n.expression).text;
+          if (!callsByName.has(t)) callsByName.set(t, []);
+          callsByName.get(t).push(n);
+        }
+        ts.forEachChild(n, walk);
+      })(sf);
+    }
+    return callsByName.get(name) || [];
+  };
+  /**
+   * A parameter that receives a client: privileged when its type is `ReturnType<typeof f>` of a
+   * privileged factory, or when every call in this file passes a privileged client. Else a guess
+   * from its name.
+   */
+  function paramClient(decl, d) {
+    const p = decl.param;
+    const guess = nameKind(ts.isIdentifier(p.name) ? p.name.text : '');
+    if (d > 8) return guess;
+    const tq = p.type && /typeof\s+([A-Za-z_$][\w$]*)/.exec(p.type.getText(sf));
+    if (tq) {
+      const id = (function find(n) { if (ts.isIdentifier(n) && n.text === tq[1]) return n; return ts.forEachChild(n, find); })(p.type);
+      const fd = id ? findDecl(id) : null;
+      const x = fd && fd.kind === 'import' ? lookup(fd) : null;
+      const fk = fd && fd.kind === 'fn' ? returnKind(fd.node, d + 1)
+        : x && x.type === 'factory' ? { t: 'client', strong: true, schema: x.schema, privileged: x.privileged } : null;
+      if (fk) return fk;
+    }
+    const name = fnName(decl.fn);
+    if (!name) return guess;
+    const args = callsNamed(name).filter((c) => { const fd = findDecl(unwrap(c.expression)); const target = fd && (fd.kind === 'fn' ? fd.node : fd.kind === 'var' ? unwrap(fd.decl.initializer) : null); return target === decl.fn; })
+      .map((c) => c.arguments[decl.index]).filter(Boolean);
+    if (!args.length) return guess;
+    const ks = args.map((a) => kind(a, d + 1));
+    if (ks.every((x) => x && x.t === 'client' && x.privileged)) return { t: 'client', strong: true, privileged: true, schema: ks[0].schema };
+    return guess;
+  }
+  const returnKinds = new Map();
+  function returnKind(fn, d) {
+    if (!fn || d > 10) return null;
+    if (returnKinds.has(fn)) return returnKinds.get(fn);
+    returnKinds.set(fn, null); // recursion guard
+    const r = returnKindOf(fn, d);
+    returnKinds.set(fn, r);
+    return r;
+  }
+  function returnKindOf(fn, d) {
+    const exprs = [];
+    if (fn.body && !ts.isBlock(fn.body)) exprs.push(fn.body);
+    else if (fn.body) (function walk(n) { if (ts.isReturnStatement(n) && n.expression) exprs.push(n.expression); else if (!ts.isFunctionLike(n)) ts.forEachChild(n, walk); })(fn.body);
+    const kinds = [];
+    for (const x of exprs) {
+      const u = unwrap(x);
+      if (u.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(u) && u.text === 'undefined')) continue;
+      const decl = ts.isIdentifier(u) ? findDecl(u) : null;
+      if (decl && decl.kind === 'var' && !decl.path.length) {
+        // A variable: every value it is given (initializer and assignments), not a guess from its name.
+        const vals = [];
+        if (decl.decl.initializer) vals.push(decl.decl.initializer);
+        (function walk(n) {
+          if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(unwrap(n.left)) && unwrap(n.left).text === u.text) vals.push(n.right);
+          ts.forEachChild(n, walk);
+        })(decl.scope);
+        const found = vals.map((v) => kind(v, d + 1)).filter((a) => a && a.t === 'client');
+        if (found.length) { kinds.push(...found); continue; }
+      }
+      const k = kind(u, d + 1);
+      if (k && k.t === 'client') kinds.push(k);
+    }
+    if (!kinds.length) return null;
+    const schemas = new Set(kinds.map((k) => k.schema));
+    return { t: 'client', strong: true, privileged: kinds.every((k) => k.privileged) || undefined, schema: schemas.size === 1 ? kinds[0].schema : '*' };
   }
   const nameKind = (name) => (NOT_SUPABASE_NAME.test(name) ? { t: 'other' } : SUPABASE_NAME.test(name) ? { t: 'client', strong: true, privileged: PRIVILEGED_NAME.test(name) || undefined } : null);
   function member(k, key) {
@@ -610,7 +712,9 @@ function analyzer(sf, file, configWrappers, project) {
       if (w) {
         const arg = wrapperArg(n, w);
         const via = target.fn ? fnName(target.fn) : target.name || (ts.isIdentifier(callee) ? callee.text : callee.getText(sf));
-        return arg ? { kind: w.kind, arg, extra: { ...w.extra, via }, ...(w.privileged ? { privileged: true } : {}), ...(w.weak ? { weak: true } : {}), ...(target.fn ? { wrapperFn: target.fn } : {}) } : null;
+        const ck = w.clientIndex != null && n.arguments[w.clientIndex] ? kind(n.arguments[w.clientIndex]) : null;
+        const privileged = ck && ck.t === 'client' ? !!ck.privileged : !!w.privileged;
+        return arg ? { kind: w.kind, arg, extra: { ...w.extra, via }, ...(privileged ? { privileged: true } : {}), ...(w.weak ? { weak: true } : {}), ...(target.fn ? { wrapperFn: target.fn } : {}) } : null;
       }
     }
     return null;
@@ -632,7 +736,7 @@ function analyzer(sf, file, configWrappers, project) {
     return { fn: d.fn, index: d.index, prop: d.path.length ? d.path[0] : null };
   }
 
-  return { lineOf, str, kind, classify, paramOf, wrappers, fnName, objectOf, arrayOf, isMswFile, findDecl, lookup, callbackOf };
+  return { lineOf, str, kind, classify, paramOf, wrappers, fnName, objectOf, arrayOf, isMswFile, findDecl, lookup, callbackOf, returnKind };
 }
 
 function literalUnion(t) {
@@ -655,7 +759,12 @@ function inferWrappers(az, allCalls) {
       if (!k || az.str(k.arg)) continue;
       const w = az.paramOf(k.arg);
       if (w && !az.wrappers.has(w.fn)) {
-        az.wrappers.set(w.fn, { kind: k.kind, index: w.index, prop: w.prop, extra: { ...k.extra }, privileged: k.privileged, weak: k.weak, name: az.fnName(w.fn) });
+        // The client may be a parameter too (`upsertRows(client, table)`): its call-site argument decides privilege.
+        const callee = unwrap(c.expression);
+        const recv = ts.isPropertyAccessExpression(callee) ? unwrap(callee.expression) : null;
+        const rd = recv && ts.isIdentifier(recv) ? az.findDecl(recv) : null;
+        const clientIndex = rd && rd.kind === 'param' && rd.fn === w.fn && !rd.path.length ? rd.index : undefined;
+        az.wrappers.set(w.fn, { kind: k.kind, index: w.index, prop: w.prop, extra: { ...k.extra }, privileged: k.privileged, weak: k.weak, clientIndex, name: az.fnName(w.fn) });
         changed = true;
       }
     }
@@ -675,10 +784,11 @@ export function summarize(text, file, configWrappers, project) {
   const out = { exports: {}, star: [], from: {} };
   const exported = (s) => s.modifiers && s.modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
   const valueOf = (nameNode, init, fnNode) => {
-    if (fnNode && az.wrappers.has(fnNode)) { const w = az.wrappers.get(fnNode); return { type: 'wrapper', kind: w.kind, index: w.index, prop: w.prop, extra: w.extra, privileged: w.privileged, weak: w.weak }; }
+    if (fnNode && az.wrappers.has(fnNode)) { const w = az.wrappers.get(fnNode); return { type: 'wrapper', kind: w.kind, index: w.index, prop: w.prop, extra: w.extra, privileged: w.privileged, weak: w.weak, clientIndex: w.clientIndex }; }
+    if (fnNode) { const r = az.returnKind(fnNode, 0); return r ? { type: 'factory', schema: r.schema, privileged: r.privileged } : null; }
     if (!init) return null;
     const i = unwrap(init);
-    if (i && (ts.isArrowFunction(i) || ts.isFunctionExpression(i)) && az.wrappers.has(i)) return valueOf(null, null, i);
+    if (i && (ts.isArrowFunction(i) || ts.isFunctionExpression(i))) return valueOf(null, null, i);
     const k = az.kind(i);
     if (k && k.t === 'client') return { type: 'client', schema: k.schema, privileged: k.privileged };
     const s = az.str(i);
