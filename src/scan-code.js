@@ -12,14 +12,16 @@ import { parseHatches } from './hatches.js';
 const TABLE_OPS = new Set(['select', 'insert', 'update', 'delete', 'upsert']);
 const STORAGE_OPS = new Set(['upload', 'download', 'remove', 'list', 'move', 'copy', 'createSignedUrl', 'createSignedUrls', 'createSignedUploadUrl', 'uploadToSignedUrl', 'getPublicUrl', 'update', 'exists', 'info']);
 /** Functions that return a supabase-js client. */
-const CLIENT_FACTORY = /^(createClient|createBrowserClient|createServerClient|createRouteHandlerClient|createServerComponentClient|createClientComponentClient|createPagesBrowserClient|createPagesServerClient|createMiddlewareClient|createServerActionClient|useSupabaseClient|useSupabase|getSupabase\w*|supabaseClient|createSupabase\w*|create\w*SupabaseClient|createAdminClient|createServiceClient|createServiceRoleClient|useClient)$/;
+const CLIENT_FACTORY = /^(createClient|createBrowserClient|createServerClient|createRouteHandlerClient|createServerComponentClient|createClientComponentClient|createPagesBrowserClient|createPagesServerClient|createMiddlewareClient|createServerActionClient|useSupabaseClient|useSupabase|getSupabase\w*|supabaseClient|createSupabase\w*|create\w*SupabaseClient|createAdminClient|createServiceClient|createServiceRoleClient|useClient|serverSupabaseClient|serverSupabaseServiceRole)$/;
 /** Receiver names that are (almost certainly) a Supabase client. */
 const SUPABASE_NAME = /supabase|client|^sb$|^db$|admin|service/i;
 /** Receiver names and modules that are something else (query builders, RPC providers, observables). */
 const NOT_SUPABASE_NAME = /^(knex|kysely|prisma|provider|ethers|web3|viem|trx|drizzle|sequelize|typeorm|mongoose|redis|octokit|qb|queryBuilder|obs|observable|rx|axios)$/i;
 const NOT_SUPABASE_MODULE = /^(knex|kysely|ethers|viem|web3|rxjs|drizzle-orm|@prisma\/client|sequelize|typeorm|mongoose|ioredis|redis|@octokit\/.*|msw|axios)(\/|$)/;
 /** A key argument or name that marks a client as privileged (service_role / secret key: bypasses RLS and grants). */
-const PRIVILEGED_KEY = /service_?role|SERVICE_?ROLE|secret_?key|SECRET_?KEY|sb_secret_/;
+// Matched case-insensitively against the factory's name and argument text: SUPABASE_SERVICE_ROLE_KEY,
+// SUPABASE_SERVICE_KEY, SUPABASE_SECRET_KEY, SUPABASE_SECRET, serviceRoleKey, sb_secret_...
+const PRIVILEGED_KEY = /service[_-]?role|service[_-]?key|secret[_-]?key|supabase[_-]?secret|sb_secret_/i;
 const PRIVILEGED_NAME = /^(supabaseAdmin|adminClient|admin|adminSupabase|serviceClient|serviceRoleClient|supabaseService|serviceSupabase|supabaseServiceRole)$/;
 const FN_URL = /(?:^|\/)functions\/v1\/([A-Za-z0-9_-]+)/g;
 const REST_RPC = /\/rest\/v1\/rpc\/([A-Za-z_][\w]*)/g;
@@ -378,7 +380,7 @@ function analyzer(sf, file, configWrappers, project) {
         const opts = e.arguments.find((a) => ts.isObjectLiteralExpression(unwrap(a)));
         const sch = opts ? atPath(opts, ['db', 'schema']) : null;
         const sv = sch ? str(sch) : null;
-        return { t: 'client', strong: true, privileged: PRIVILEGED_KEY.test(text) || /admin|service/i.test(name), schema: sv && sv.vals && sv.vals.length === 1 ? sv.vals[0] : (sch ? '*' : undefined) };
+        return { t: 'client', strong: true, privileged: PRIVILEGED_KEY.test(text) || PRIVILEGED_KEY.test(name) || /admin|service/i.test(name), schema: sv && sv.vals && sv.vals.length === 1 ? sv.vals[0] : (sch ? '*' : undefined) };
       }
       if (ts.isPropertyAccessExpression(c)) {
         const base = kind(c.expression, d + 1);

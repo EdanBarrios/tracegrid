@@ -345,3 +345,16 @@ test('F20 hatches work with CR-only line endings', async () => {
   const r = await run({ 'src/a.ts': "declare const supabase: any;\r\r// supareach: ignore missing-rpc test reason\rsupabase.rpc('nope_fn');\r" });
   assert.ok(!fp(r).has('missing-rpc:nope_fn'));
 });
+
+test('S1 Nuxt serverSupabaseServiceRole and SERVICE_KEY / SUPABASE_SECRET env names are privileged clients', async () => {
+  const r = await run({
+    'server/api/a.ts': `export default defineEventHandler(async (event) => {\n  const client = await serverSupabaseServiceRole(event);\n  await client.from('secrets').select();\n  return client.rpc('target_fn');\n});`,
+    'server/api/b.ts': `import { createClient } from '@supabase/supabase-js';\nconst sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);\nexport const x = () => sb.rpc('other_fn');`,
+    'server/api/c.ts': `import { createClient } from '@supabase/supabase-js';\nconst sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET!);\nexport const y = () => sb.from('secrets').select();`,
+    'pages/p.vue': `<script setup>\nconst client = serverSupabaseClient(event);\nclient.rpc('never_called');\n</script>`,
+  });
+  assert.ok(!fp(r).has('client-table-without-rls:secrets'), 'service-role reads do not make a table client-touched');
+  for (const n of ['target_fn', 'other_fn']) assert.ok(fp(r).has(`exposed-uncalled-function:${n}/0`), `${n}: privileged caller does not justify the grant`);
+  assert.ok(r.links.filter((l) => l.relation === 'rpc-service').length >= 2);
+  assert.ok(!fp(r).has('exposed-uncalled-function:never_called/0'), 'serverSupabaseClient is a user-scoped client');
+});
