@@ -63,7 +63,7 @@ export function renderHtml(r, opts = {}) {
   <div id="list"></div>
 </aside>
 <main id="main">
-  <div id="bar"><span id="crumb"></span><span class="sp"></span><button id="fit" class="ghost" title="Fit to view">FIT</button></div>
+  <div id="bar"><span id="crumb"></span><span class="sp"></span><button id="ov3d" class="ghost" hidden title="Back to the overview (Esc)">\u25c1 overview</button><button id="fit" class="ghost" title="Fit to view">FIT</button></div>
   <div id="stage">
     <svg id="svg" xmlns="http://www.w3.org/2000/svg"><defs>
       <marker id="ar" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0.5 L10,5 L0,9.5 z"/></marker>
@@ -71,7 +71,7 @@ export function renderHtml(r, opts = {}) {
     </defs><g id="vp"></g></svg>
     <div id="dash"></div>
     <div id="card" hidden></div>
-    <div id="three" hidden><div id="three-canvas"></div><div id="three-labels"></div><div id="three-msg" hidden></div></div>
+    <div id="three" hidden><div id="three-canvas"></div><div id="three-labels"></div><div id="three-msg" hidden></div><div id="three-crumb" hidden></div></div>
   </div>
 </main>
 </div>
@@ -189,6 +189,7 @@ table.mx .na{color:var(--line2);padding:5px 6px;display:block}
 /* 3D */
 #three{position:absolute;inset:0;background:var(--3d-bg)}#three-canvas{position:absolute;inset:0}
 #three-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
+#three-crumb{position:absolute;left:12px;top:10px;z-index:2;font:var(--fs-small) var(--font);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:3px 8px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#three-crumb a{cursor:pointer;text-decoration:underline}
 #three-labels div{position:absolute;transform:translate(-50%,-150%);font:var(--fs-label) var(--font);color:var(--3d-label);white-space:nowrap;text-shadow:0 0 6px var(--3d-bg),0 0 2px var(--3d-bg);opacity:.9}
 #three-labels div.fix{color:var(--fix)}#three-labels div.review{color:var(--review)}
 #three-msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:12px 16px;z-index:3;max-width:80%;text-align:center}
@@ -370,6 +371,8 @@ function fit(){if(!bounds)return;var W=svg.clientWidth,H=svg.clientHeight;var to
   /* Keep the drawing clear of the detail card when there is room below it. */
   if(!card.hidden){var ch=card.offsetHeight+24;if(H-ch>Math.min(bounds.h*0.8,H*0.45))top=ch}
   var k=Math.min(1.25,Math.min((W-40)/Math.max(1,bounds.w),(H-top-40)/Math.max(1,bounds.h)));T.k=k;T.x=(W-bounds.w*k)/2-bounds.x*k;T.y=top+(H-top-bounds.h*k)/2-bounds.y*k;applyT()}
+$('ov3d').addEventListener('click',overview3d);
+document.addEventListener('keydown',function(ev){if(ev.key!=='Escape'||state.view!=='3d')return;var t=ev.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'))return;overview3d()});
 $('fit').addEventListener('click',function(){if(state.view==='3d')reset3d();else fit()});
 window.addEventListener('resize',function(){if(state.view==='path'||state.view==='map')fit()});
 var onBox=function(el,fn){el.addEventListener('click',function(ev){if(moved)return;ev.stopPropagation();fn()})};
@@ -578,7 +581,7 @@ function draw(){if(state.view==='dash')drawDash();else if(state.view==='path'){i
 /* ---------- tabs and theme ---------- */
 document.querySelectorAll('#tabs button').forEach(function(b){b.addEventListener('click',function(){setView(b.getAttribute('data-view'))})});
 function setView(v){state.view=v;document.querySelectorAll('#tabs button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===v)});
-  var three=$('three');if(v==='3d'){three.hidden=false;svg.style.display='none';$('dash').style.display='none';renderCard();$('crumb').textContent='';$('crumb').appendChild(h('span',{cls:'lbl',text:'3D \u00b7 '}));$('crumb').appendChild(document.createTextNode('drag to spin, scroll to zoom, click a finding to fly to it'));open3d()}else{three.hidden=true;pause3d();renderCard();draw()}}
+  var three=$('three');$('ov3d').hidden=v!=='3d';if(v==='3d'){three.hidden=false;svg.style.display='none';$('dash').style.display='none';renderCard();$('crumb').textContent='';$('crumb').appendChild(h('span',{cls:'lbl',text:'3D \u00b7 '}));$('crumb').appendChild(document.createTextNode('drag to spin, scroll to zoom, click a finding to fly to it'));open3d()}else{three.hidden=true;pause3d();renderCard();draw()}}
 $('theme').addEventListener('click',function(){var r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'dark':'light';draw()});
 
 /* ---------- 3D showcase (lazy, pinned, SRI) ---------- */
@@ -617,12 +620,13 @@ function start3d(){msg(null);pal();build3d();var el=$('three-canvas');
     .linkDirectionalParticles(function(l){if(hl)return lit(l)?2:0;return links3.length<=700?1:(isFix(l.source)||isFix(l.target))?1:0})
     .linkDirectionalParticleSpeed(0.0035).linkDirectionalParticleWidth(1.3).linkDirectionalParticleColor(function(){return P3.hi})
     .warmupTicks(nodes3.length>800?40:20).cooldownTicks(nodes3.length>800?150:300)
-    .onEngineStop(function(){if(!interacted&&!hl)fit3d(900)})
+    .onNodeHover(function(n){hover3=n||null}).onEngineStop(function(){if(!interacted&&!hl)fit3d(900)})
     .onNodeClick(function(n){var fs=byNode.get(n.id);if(fs)selectFinding(fs[0]);else if(byId.has(n.id))selectNode(n.id);else fly3d(n.id)})
     .graphData({nodes:nodes3,links:links3});
   }catch(e){msg('3D view could not start ('+String(e&&e.message||e)+'); the 2D views still work.');G3=null;return}
   var ctl=G3.controls();if(ctl){ctl.autoRotate=true;ctl.autoRotateSpeed=0.45}
-  ['pointerdown','wheel','touchstart'].forEach(function(t){el.addEventListener(t,function(){interacted=true;var c=G3&&G3.controls();if(c)c.autoRotate=false},{passive:true})});
+  ['pointerdown','wheel','touchstart'].forEach(function(t){el.addEventListener(t,function(){interacted=true;var c=G3&&G3.controls();if(c)c.autoRotate=false;idle3()},{passive:true})});
+  el.addEventListener('dblclick',function(){if(!hover3)overview3d()});
   window.addEventListener('resize',function(){if(G3&&state.view==='3d')G3.width(el.clientWidth).height(el.clientHeight)});
   setTimeout(function(){shapes();setTimeout(function(){stars();halos()},400)},600);[2500,5000,8000].forEach(function(ms){setTimeout(function(){if(G3&&!interacted&&!hl)fit3d(900)},ms)});resume3d();if(state.node)setTimeout(function(){fly3d(state.node)},1200)}
 /* The library does not expose three.js, so the classes come from objects it has already built:
@@ -668,14 +672,22 @@ function frame(ts){raf=requestAnimationFrame(frame);if(!G3)return;if(ts-lastPatc
   labelEls.forEach(function(el,id){if(!keep.has(id))el.style.display='none'})}
 function resume3d(){if(!raf)raf=requestAnimationFrame(frame);if(G3&&G3.resumeAnimation)G3.resumeAnimation()}
 function pause3d(){if(raf){cancelAnimationFrame(raf);raf=0}if(G3&&G3.pauseAnimation)G3.pauseAnimation()}
+var hover3=null,idleT=0;
+/* Auto-rotate stays off while something is selected; on the overview it resumes after 5s without input. */
+function idle3(){clearTimeout(idleT);idleT=setTimeout(function(){var c=G3&&G3.controls();if(c&&!hl&&state.view==='3d')c.autoRotate=true},5000)}
+function crumb3(){var b=$('three-crumb');b.textContent='';if(!hl||!hlId){b.hidden=true;return}var n=nodes3.find(function(x){return x.id===hlId});var a=h('a',{text:'overview'});a.addEventListener('click',overview3d);b.appendChild(a);b.appendChild(document.createTextNode(' \u203a '+(n?n.label:hlId)));b.hidden=false}
+function overview3d(){if(state.view!=='3d')return;state.sel=null;state.node=null;state.mapSel=null;renderList();renderCard();reset3d()}
 function fly3d(id){if(!G3||!nodes3)return;var n=nodes3.find(function(x){return x.id===id});if(!n){var b=byId.get(id);if(b&&b.type==='file')n=nodes3.find(function(x){return x.id==='folder:'+folderOf(b.label)})}if(!n||n.x==null)return;
   hlId=n.id;hl=new Set([n.id]);links3.forEach(function(l){var a=sid(l.source),b=sid(l.target);if(a===n.id)hl.add(b);if(b===n.id)hl.add(a)});
-  refresh3d();var c=G3.controls();if(c)c.autoRotate=false;var dist=170,r=Math.hypot(n.x,n.y,n.z)||1,k=1+dist/r;G3.cameraPosition({x:n.x*k,y:n.y*k,z:n.z*k},{x:n.x,y:n.y,z:n.z},1000)}
-function reset3d(){if(!G3)return;hl=null;hlId=null;refresh3d();fit3d(800)}
+  refresh3d();crumb3();var c=G3.controls();if(c){c.autoRotate=false;c.enabled=true}clearTimeout(idleT);var dist=170,r=Math.hypot(n.x,n.y,n.z)||1,k=1+dist/r;G3.cameraPosition({x:n.x*k,y:n.y*k,z:n.z*k},{x:n.x,y:n.y,z:n.z},1000);settle3(function(){return{x:n.x,y:n.y,z:n.z}},1050)}
+/* After a transition, make sure the orbit controls are live and orbit the given point. */
+function settle3(pt,ms){setTimeout(function(){var c=G3&&G3.controls();if(!c)return;c.enabled=true;if(c.target&&c.target.set){var p=pt();c.target.set(p.x,p.y,p.z)}if(c.update)c.update()},ms)}
+if(/[?&]debug\b/.test(location.search))window.__tg3d={cameraDistance:function(){var c=G3.camera(),t=G3.controls().target;return Math.hypot(c.position.x-t.x,c.position.y-t.y,c.position.z-t.z)},target:function(){var t=G3.controls().target;return[t.x,t.y,t.z]},enabled:function(){return G3.controls().enabled},autoRotate:function(){return G3.controls().autoRotate},selected:function(){return hlId},select:function(i){selectFinding(D.findings[i||0])},zoom:function(d){var c=G3.controls();c.dollyIn?c.dollyIn(d):0;c.update()},ready:function(){return !!G3&&nodes3.some(function(n){return n.x!=null})}};
+function reset3d(){if(!G3)return;hl=null;hlId=null;refresh3d();crumb3();fit3d(800);idle3()}
 /* Fit the camera to the densest 90% of nodes: a few far-flung ones would otherwise shrink everything else. */
 function fit3d(ms){var pts=nodes3.filter(function(n){return n.x!=null});if(!pts.length)return;var c={x:0,y:0,z:0};pts.forEach(function(n){c.x+=n.x;c.y+=n.y;c.z+=n.z});c.x/=pts.length;c.y/=pts.length;c.z/=pts.length;
   var d=pts.map(function(n){return Math.hypot(n.x-c.x,n.y-c.y,n.z-c.z)}).sort(function(a,b){return a-b});var R=Math.max(40,d[Math.floor((d.length-1)*(pts.length<60?1:0.9))]);
-  var cam=G3.camera();var fov=(cam&&cam.fov?cam.fov:40)*Math.PI/180;var dist=R/Math.tan(fov/2)*1.08;G3.cameraPosition({x:c.x,y:c.y,z:c.z+dist},c,ms)}
+  var cam=G3.camera();var fov=(cam&&cam.fov?cam.fov:40)*Math.PI/180;var dist=R/Math.tan(fov/2)*1.08;G3.cameraPosition({x:c.x,y:c.y,z:c.z+dist},c,ms);settle3(function(){return c},ms+50)}
 function refresh3d(){if(!shaped)G3.nodeColor(col3);recolor();G3.linkColor(G3.linkColor()).linkWidth(G3.linkWidth()).linkDirectionalArrowLength(G3.linkDirectionalArrowLength()).linkDirectionalArrowColor(G3.linkDirectionalArrowColor()).linkDirectionalParticles(G3.linkDirectionalParticles());lastPatch=0}
 
 /* Deep links: #f=<rule>:<subject> (or f=first) selects a finding and opens the path view; view=dash|path|map|3d opens that view. */

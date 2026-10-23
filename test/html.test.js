@@ -103,3 +103,11 @@ test('graph.html: dashboard by default, arrowed and labelled edges, and the look
   assert.match(code, /linkDirectionalArrowLength/);
   assert.match(code, /nodeThreeObject/);
 });
+
+test('3D tab has an overview button, an Esc handler and a breadcrumb', () => {
+  const h = renderHtml(hostile());
+  assert.match(h, /id="ov3d"[^>]*>\\u25c1 overview|id="ov3d"[^>]*>◁ overview/);
+  assert.match(h, /ev\.key!=='Escape'\|\|state\.view!=='3d'/);
+  assert.match(h, /id="three-crumb"/);
+  assert.match(h, /addEventListener\('dblclick'/);
+});
