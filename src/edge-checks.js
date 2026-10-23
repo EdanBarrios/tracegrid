@@ -10,6 +10,16 @@ import { MAX_SOURCE_FILE } from './scan-code.js';
 const AUTH_CHECK = /\.auth\s*\.\s*getUser\s*\(|\bgetClaims\s*\(|\bjwtVerify\s*\(|\bverify(?:Jwt|JWT|Token|Signature|Webhook|Hmac|Request|Auth|Caller|User)\w*\s*\(|\bconstructEvent(?:Async)?\s*\(|\b(?:check|verify|validate|assert|ensure|require)(?:Cron|Secret|Signature|Token|Auth|User|Caller|Role|Webhook|Admin|Jwt|JWT|Hmac|Session|Bearer|ApiKey|Key|Svix|Stripe|Member|Access|Permission)\w*\s*\(|\bauthori[sz]e\w*\s*\(|\bauthenticate\w*\s*\(|\bgetUser\s*\(|\btimingSafeEqual\b|crypto\s*\.\s*subtle\s*\.\s*verify\b|\bwebhooks?\s*\.\s*verify\b|\bCRON_SECRET\b/;
 const lineAt = (text, idx) => text.slice(0, idx).split('\n').length;
 
+/** Line of the first auth check that is a call, not a function's own definition. */
+function firstAuthCheck(text) {
+  const re = new RegExp(AUTH_CHECK.source, 'g');
+  for (let m; (m = re.exec(text));) {
+    if (/\bfunction\s*\*?\s*$/.test(text.slice(Math.max(0, m.index - 20), m.index))) continue;
+    return lineAt(text, m.index);
+  }
+  return null;
+}
+
 /**
  * @param {string} root
  * @param {{ name: string, dir: string }[]} edgeFns
@@ -28,8 +38,7 @@ export function edgeHints(root, edgeFns, files, calls) {
       try { const st = fs.statSync(path.join(root, f)); if (st.size > MAX_SOURCE_FILE) continue; text = fs.readFileSync(path.join(root, f), 'utf8'); } catch { continue; }
       const masked = text.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')).replace(/(^|[^:])\/\/[^\n]*/g, (c, a) => a + ' '.repeat(c.length - a.length));
       const priv = calls.filter((c) => c.file === f && c.privileged).map((c) => c.line).sort((a, b) => a - b)[0];
-      const am = AUTH_CHECK.exec(masked);
-      const authLine = am ? lineAt(masked, am.index) : null;
+      const authLine = firstAuthCheck(masked);
       if (priv && !h.serviceBeforeAuth && (authLine == null || priv < authLine)) h.serviceBeforeAuth = { at: `${f}:${priv}`, auth: authLine ? `${f}:${authLine}` : null };
       if (!h.requestFetch) {
         const fetchHit = requestFetch(masked);
