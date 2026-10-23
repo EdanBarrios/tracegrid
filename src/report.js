@@ -32,6 +32,9 @@ export function renderReport(r) {
     `- Final schema: ${s.tables} tables, ${s.views} views, ${s.functions} functions, ${s.policies} policies, ${s.cron_jobs} cron jobs.`,
     `- ${s.edge_functions} edge functions, ${s.distinct_edge_functions_invoked} invoked from code.`, '');
 
+  // Rule `title` and `why` are emitted as Markdown without escaping. They are trusted: core rules ship
+  // with supareach, and plugin rules are code that only loads with --allow-plugins (refused on pull
+  // request events), so their author can already run anything. Finding data is always escaped.
   for (const rule of r.rules) {
     const items = r.findings.filter((f) => f.rule === rule.id);
     L.push(`## ${rule.title} (${items.length})`, '', `\`${rule.id}\`, ${rule.level}${rule.plugin ? `, from plugin \`${rule.plugin}\`` : ''}. ${rule.why}`, '');

@@ -1,6 +1,11 @@
 {
   "name": "supareach",
-  "owner": { "name": "Edan Barrios" },
+  "owner": {
+    "name": "Edan Barrios"
+  },
+  "metadata": {
+    "description": "supareach: static, offline map of how app code reaches a Supabase schema (tables, RPCs, edge functions, storage, grants, RLS), with a Claude Code skill for reading its findings."
+  },
   "plugins": [
     {
       "name": "supareach",

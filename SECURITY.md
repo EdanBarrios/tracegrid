@@ -38,7 +38,14 @@ even `node_modules/.bin`. The defaults below assume that.
    control characters and a leading `::` (no workflow-command injection); `report.md` and the
    job summary escape Markdown and HTML; `graph.html` escapes everything it renders; SARIF URIs
    are percent-encoded. Review the findings themselves, not only the summary counts.
-4. **Hardened Actions setup.** `permissions: contents: read` for the job, plus
+4. **The baseline is pull-request controlled.** `supareach.baseline.json` lives in the
+   repository, so a pull request can add its own new findings to it and `--check` will pass.
+   Review baseline diffs like code (a CODEOWNERS entry on the file helps), and read the
+   `--update-baseline` output, which lists every fingerprint it adds or removes, before
+   committing it. `--update-baseline` refuses to add entries without `--force` for the same
+   reason. In-source `supareach: ignore` hatches and `ignore` config entries are equally
+   PR-controlled; they are listed with their reasons in `report.md`.
+5. **Hardened Actions setup.** `permissions: contents: read` for the job, plus
    `security-events: write` only on the job that uploads SARIF; actions pinned by commit SHA;
    an exact supareach version (`npx --yes supareach@0.2.0`), not a range. See the README.
 
