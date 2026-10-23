@@ -3,7 +3,96 @@
 All notable changes. Versions follow semver; while 0.x, minor versions may break the config,
 the rule contract or `graph.json` (whose `schema_version` is bumped when its shape breaks).
 
-## Unreleased (0.1.0)
+## 0.2.0
+
+A correctness and safety release driven by five red-team reviews (security, SQL semantics,
+code extraction, nine real repositories, launch readiness). Findings changed for most
+projects: re-run `--update-baseline` after reviewing them.
+
+### Security
+- Plugins load only with `--allow-plugins`, which is refused on GitHub `pull_request` /
+  `pull_request_target` events; `--no-plugins` skips them. Plugin paths must be inside the
+  project.
+- `psql` is resolved to an absolute path outside the project (never `node_modules/.bin` or a
+  relative `PATH` entry); `SUPAREACH_PSQL` must be absolute. `?options=` is rejected,
+  `PGOPTIONS` cleared, and the catalog transaction pins `search_path = pg_catalog, pg_temp`.
+- Reads are confined to the project root (globs, `supabaseDir`, `migrations`,
+  `functionsDir`; symlinks only when the target is inside).
+- Console output, `report.md`, the step summary and SARIF escape project-derived text
+  (no workflow-command or Markdown injection).
+- Size caps: source and migration files over 2 MB, SQL statements over 256 KB are skipped and
+  listed. Linear-time SQL splitter, reference scanner and hatch parser; `globToRegExp` no
+  longer hangs on an unclosed `{`; `__proto__`/`constructor` keys in the config are dropped and
+  unknown keys warn.
+
+### Scan scope
+- The default `include` is the whole project, including `.vue`, `.svelte` and `.astro` script
+  blocks (with original line numbers) and `.mts`/`.cts`. Dot-directories and `node_modules`
+  are never walked; `dist`/`build`/`out`/`ios`/`android` are skipped only at the root or next to
+  a `package.json` (`outputDirs`). Stories and `__mocks__` are excluded like tests.
+- The Supabase project is auto-detected from `**/supabase/config.toml` and named in the
+  output; several require `supabaseDir`.
+- 0 code files, 0 call sites, or 0 migrations without `--db-url` are loud warnings and make
+  `--check` exit 2. Files with syntax errors, binary files and UTF-16 (decoded with a BOM)
+  are reported in the console, `report.md` and SARIF.
+- When unresolved dynamic `.rpc()` / `invoke` call sites could reach an "uncalled" function or
+  edge function, the finding is downgraded to a warning with a caveat naming them.
+
+### SQL semantics (migration replay)
+- `ALTER DEFAULT PRIVILEGES` is modelled as Postgres does: a global layer and per-schema layers
+  that only add. A per-schema revoke from PUBLIC no longer hides an exposed function.
+- `supabaseDefaultGrants`: `"legacy"` | `"opt-in"` | `false` (default from `[api]
+  auto_expose_new_tables` in config.toml, else legacy); `--db-url` reports the live
+  `pg_default_acl`. Table and view grants are tracked.
+- Role membership (`grant role to authenticated`) is inherited; `ALL FUNCTIONS` / `ALL
+  PROCEDURES` / `ALL ROUTINES` touch only their kind; quoted identifiers throughout;
+  `SET SCHEMA`; `BEGIN ATOMIC` bodies; index expressions; database-webhook trigger URLs.
+- Only `<version>_name.sql` files are replayed, in numeric order, like the Supabase CLI.
+- `DO` blocks: `EXECUTE` with literal text or literal `format()` arguments (also in loops over
+  array literals) is applied. Other dynamic RLS/policy/grant SQL is a risky warning and makes
+  RLS findings `confidence: low`. The old revoke-loop heuristic is gone.
+- SQL references respect schema qualifiers and quoted case; DDL mentions of a function are not
+  calls.
+- Catalog mode checks schema `USAGE`, reads SQL-standard bodies, all table privileges,
+  trigger and index definitions.
+
+### Code extraction
+- Scope-aware name resolution: shadowing, `let` reassignment, `as const` arrays and loops,
+  `.map` over literals, object maps, enums, concatenation, template literals, imported constants
+  through barrels and path aliases. Partially known names link ambiguously to matching
+  functions.
+- Receivers: destructured, bound, aliased and element-access `rpc` / `functions` / `storage`;
+  `db: { schema }` and `.schema(<dynamic>)`; `.rpc`/`.from` on clearly non-Supabase receivers
+  (knex, ethers, drizzle, rxjs) are ignored; unknown receivers never create missing-* findings.
+- Wrappers: cross-file exported wrappers, generic hooks, class and object methods,
+  destructured parameters; config wrappers take `{ "name", "arg" }`.
+- PostgREST: computed fields and computed relationships in `select()`, embedded tables,
+  realtime `postgres_changes`, raw `/rest/v1/...` URLs, concatenated and relative
+  `/functions/v1/` URLs. Mock handlers (msw), help text and `if (false)` are not callers.
+- service_role / secret-key clients are a separate caller kind (`-service` relations): they
+  do not clear anon/authenticated findings and do not trigger browser-client rules.
+- `[auth.hook.*]` in config.toml and database-webhook triggers count as callers.
+
+### Rules
+- New: `client-view-without-security-invoker` (error), `client-table-not-granted` (warning),
+  `auth-hook-function-exposed` (warning).
+- `exposed-uncalled-function`: SECURITY INVOKER and authenticated-only is a warning.
+- `granted-helper-function`: SECURITY DEFINER helpers callable by anon, or with no caller that
+  needs the grant, are warnings instead of notes.
+- `client-table-without-rls` needs anon/authenticated privileges; `client-table-without-policies`
+  fires when no permissive policy applies to the client roles.
+
+### CLI, packaging
+- Top findings with `file:line` in the terminal; `help`; extra positionals rejected;
+  `explain`, `path` and `init` reserved; `--check` without a baseline explains what to do;
+  `--demo` runs the bundled example from npx.
+- `graph.html`: on graphs over 200 nodes, starts focused on findings and their neighbours with
+  files grouped by folder; "show all"; clicking a node expands it; hint on an empty graph.
+- `repository`, `homepage`, `bugs`; Node 20+; SARIF `informationUri` points at the repository.
+- Composite `action.yml`, CI matrix, Claude Code plugin and skill, `docs/AGENTS.md`,
+  CONTRIBUTING and issue templates.
+
+## 0.1.0
 
 First public version, renamed from the internal working name.
 

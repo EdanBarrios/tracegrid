@@ -2,100 +2,121 @@
 
 **What can a signed-in user reach that no code calls?**
 
-**v0, best effort.** A small CLI that maps how your app code reaches your Supabase
-project (tables, RPCs, edge functions, storage buckets, cron jobs) and joins it with what
-the database actually grants and protects. It reports the reverse direction nobody else
-does: functions `anon` or `authenticated` can execute that nothing in the app, its edge
-functions, cron, triggers, policies or views calls; edge functions with no caller; and
-tables the client reads without RLS. No AI, no telemetry. Not affiliated with Supabase.
+A small CLI that maps how your app code reaches your Supabase project (tables, RPCs, edge
+functions, storage buckets, cron jobs, auth hooks) and joins it with what the database
+actually grants and protects. It reports the reverse direction most tools skip: functions
+`anon` or `authenticated` can execute that nothing in the app, its edge functions, cron,
+triggers, policies or views calls; edge functions with no caller; tables and views the client
+reads without RLS. Static and offline by default. No AI, no telemetry. **v0.x, best effort:
+read [Limitations](#limitations) before acting on a finding.** Not affiliated with Supabase.
 
-![graph.html for the bundled demo app](docs/screenshot.png)
+![graph.html for the bundled demo app](https://raw.githubusercontent.com/EdanBarrios/supareach/main/docs/screenshot.png)
 
 ## Quickstart
 
 ```sh
 cd your-supabase-app
-npx supareach                       # scans ./src and ./supabase, offline
-open supareach-out/graph.html
+npx --yes supareach@0.2.0            # scans the whole project, offline
 ```
 
-Try it on the bundled example: `npx supareach examples/demo-app`.
+It prints which Supabase project and code roots it used, then the top findings with
+`file:line`. Full output goes to `./supareach-out/`. Try the bundled example:
+`npx --yes supareach@0.2.0 --demo`.
 
-Output in `./supareach-out/`:
+If it warns about **0 code files, 0 Supabase call sites or 0 migrations, the result is empty,
+not clean**: set `include` or `supabaseDir` in `supareach.config.json` (with `--check` such a
+run exits 2).
 
 | File | What |
 |---|---|
-| `report.md` | Findings with file:line, suppressions with their reasons, and everything it could not resolve or parse |
-| `graph.json` | `schema_version` 1. Graph section in networkx node-link form (`nodes`, `links` with `relation` and `confidence`: `extracted`, `inferred` or `ambiguous`), so `networkx.node_link_graph(data, edges="links")` and Graphify-style tooling can load it; plus `rules`, `findings`, `suppressed`, `stats` |
-| `graph.html` | One self-contained page: force layout, search, click a node to see its links, dark/light. No CDN. |
+| `report.md` | Findings with `file:line`, suppressions with their reasons, and everything it could not resolve, parse or apply |
+| `graph.json` | `schema_version` 1. networkx node-link graph (`nodes`, `links` with `relation` and `confidence`: `extracted`, `inferred` or `ambiguous`), plus `rules`, `findings`, `suppressed`, `stats`, `project`, `warnings` |
+| `graph.html` | One self-contained page, no CDN. Large graphs open focused on findings and their neighbours with files grouped by folder; "show all" and click-to-expand. |
 
 ## What it finds
 
 | Rule | Level | Meaning |
 |---|---|---|
-| `exposed-uncalled-function` | error | `anon`/`authenticated` can execute it and nothing references it |
-| `granted-helper-function` | note | executable by those roles, no `.rpc()` caller, but used by a policy, view, trigger, cron job or other SQL. Needed for RLS helpers; often not for the rest |
-| `client-table-without-rls` | error | client code queries a table with RLS off |
-| `client-table-without-policies` | warning | RLS on, no policy: the client gets nothing back |
+| `exposed-uncalled-function` | error | `anon`/`authenticated` can execute it and nothing references it. **Warning** when it is SECURITY INVOKER and authenticated-only, or when unresolved dynamic `.rpc()` calls could reach it (the note names them) |
+| `granted-helper-function` | note | executable by those roles, no `.rpc()` caller, used by a policy, view, trigger, cron job or other SQL. **Warning** when it is SECURITY DEFINER and callable by anon, or no caller needs the grant |
+| `client-table-without-rls` | error | client code reads a table with RLS off that anon/authenticated can reach |
+| `client-view-without-security-invoker` | error | client code reads an owner-rights view (or materialized view) over RLS tables: RLS is bypassed |
+| `client-table-without-policies` | warning | RLS on, but no permissive policy for anon/authenticated/PUBLIC: the client gets nothing |
+| `client-table-not-granted` | warning | client code queries a table neither anon nor authenticated has privileges on (the 2026 "new tables are not exposed" default) |
+| `auth-hook-function-exposed` | warning | a `[auth.hook.*]` Postgres function the client can execute |
 | `missing-rpc` | error | code calls an RPC the schema does not define |
 | `unknown-table` | warning | code queries a table or view the schema does not define |
-| `uncalled-edge-function` | warning | no `functions.invoke`, `/functions/v1/<name>` URL, cron job or SQL caller, and not declared an entry point |
-| `missing-edge-function` | error | invoked, but no `supabase/functions/<name>/index.*` |
+| `uncalled-edge-function` | warning | no `functions.invoke`, `/functions/v1/<name>` URL, cron, webhook, auth hook or SQL caller, and not declared an entry point |
+| `missing-edge-function` | error | invoked, but no such function in `supabase/functions` |
 
-Functions are identified as `name/arity` (`next_invoice_number/1`). Each finding has a
-stable fingerprint, `<rule>:<subject>`, and records whether it rests on migrations or the
-live catalog.
+Functions are identified as `name/arity` (`next_invoice_number/1`). Each finding has a stable
+fingerprint, `<rule>:<subject>`, records whether it rests on migrations or the live catalog,
+and may carry a `note` or `confidence: low`.
 
 ## Where the schema comes from
 
-- **Migrations (default).** `supabase/migrations/*.sql` replayed in order with a small
-  hand-written parser: tables, views, functions and overloads, grants and revokes
-  (including `alter default privileges` and Supabase's default grants to `anon` and
-  `authenticated`), RLS, policies, triggers, `cron.schedule`. Zero setup, works on a
-  checkout. **Best effort:** dynamic SQL in `DO` blocks, dashboard changes and anything not
-  in a migration are invisible. Statements it skips are listed, and if any of them touch
-  `GRANT`, `REVOKE` or `DROP POLICY` it warns that grant-based findings may be wrong.
-- **Live catalog (`--db-url`).** Reads `pg_proc` with `has_function_privilege` for `anon`
-  and `authenticated`, `pg_class.relrowsecurity`, `pg_policies`, triggers, `cron.job` and
-  `storage.buckets`, through the `psql` client inside `BEGIN ... READ ONLY` ending in
-  `ROLLBACK`. The catalog wins; migrations only supply file:line. **Gate CI on this mode
-  when you can**: a revoke inside dynamic SQL, or one made in the dashboard, is enough to
-  make migration replay report a function as exposed when it is not.
+- **Migrations (default).** The Supabase project is auto-detected (`**/supabase/config.toml`)
+  and its `migrations/<version>_name.sql` files are replayed in version order, like the
+  Supabase CLI. The replay models tables, views, functions and overloads, grants and revokes
+  including role membership and `ALTER DEFAULT PRIVILEGES` (global and per-schema layers, as
+  Postgres does), table grants, RLS, policies, triggers, `cron.schedule`, and `EXECUTE` in `DO`
+  blocks when its text is fully known. Statements it skips are listed; if any touch grants,
+  policies or RLS it warns that grant-based findings may be wrong.
+- **Default grants.** Supabase historically granted new tables and functions in `public` to
+  anon/authenticated/service_role (per schema); from 2026 new tables are not exposed by
+  default. `supabaseDefaultGrants` is `"legacy"`, `"opt-in"` or `false` (vanilla Postgres).
+  By default it reads `[api] auto_expose_new_tables` from config.toml, else assumes `legacy`,
+  the choice that reports more rather than less. Catalog mode prints the live model.
+- **Live catalog (`--db-url`).** Reads `pg_proc` with `has_function_privilege` (and schema
+  `USAGE`), table privileges, RLS, policies, triggers, indexes, `pg_default_acl`, `cron.job`
+  and `storage.buckets` through `psql` inside a read-only transaction ending in `ROLLBACK`. The
+  catalog wins; migrations only supply `file:line`. **Prefer this mode when you can**, and only
+  in trusted workflows (see [SECURITY.md](SECURITY.md)).
 
 ```sh
-# A database built from your migrations (CI) or a read-only role on a real one.
-npx supareach --db-url "postgresql://readonly_user:...@host:5432/postgres"
-# or SUPAREACH_DB_URL=... npx supareach   (keeps the URL out of argv)
+SUPAREACH_DB_URL="postgresql://readonly_user:...@host:5432/postgres" npx --yes supareach@0.2.0
 ```
 
-It never asks for a Supabase API key: it talks Postgres, not the Data API, so it never
-needs `service_role`. It needs `psql` on PATH for this mode and no other dependency.
+It never asks for a Supabase API key: it talks Postgres, not the Data API.
 
 ## What it reads in code
 
-TypeScript compiler API (syntax only, no type check), default `src/**` and
-`supabase/functions/**`, tests excluded:
+The whole project by default (`ts`, `tsx`, `js`, `jsx`, `mjs`, `cjs`, `mts`, `cts`, and the
+script parts of `vue`, `svelte`, `astro`), excluding tests, stories, mocks, `node_modules`,
+dot-directories, and build output next to a `package.json`. With the TypeScript parser (syntax
+only, no type checker) it records:
 
-- `.from('table')` with the chained operation, `.rpc('fn')` including
-  `(supabase.rpc as any)('fn')` and multi-line calls, `functions.invoke('name')`, any string
-  containing `/functions/v1/<name>`, `.storage.from('bucket')`.
-- `.schema('x').from('t')` and `.schema('x').rpc('f')` are recorded as `x.t` / `x.f`.
-- A same-file `const` resolves as `inferred`; a ternary, `||` or literal-union parameter as
-  `ambiguous` (every candidate is recorded).
-- Same-file wrappers are inferred (`const rpc = (n) => supabase.rpc(n)`); cross-file ones go
-  in `wrappers` in the config.
-- Anything else (`supabase.from(tableName)`) is **counted and listed, never dropped**. A
-  `// supareach: names a,b` comment above the call or its wrapper resolves it.
+- `.from('t')` with the chained operation, `.rpc('f')`, `functions.invoke('name')`,
+  `.storage.from('bucket')`, through aliases, destructuring (`const { rpc } = supabase`),
+  `.bind`/`.call`/`.apply`, `supabase['rpc']`, `.schema('x')` and
+  `createClient(url, key, { db: { schema } })`.
+- PostgREST `select()` strings: embedded tables, computed fields and computed relationships;
+  realtime `postgres_changes`; raw `/rest/v1/rpc/<fn>`, `/rest/v1/<table>` and
+  `/functions/v1/<name>` URLs, including concatenation and `new URL('functions/v1/x', base)`.
+- Names from literals, constants (scope-aware), `let` reassignments, `as const` arrays and
+  loops, object maps, enums, concatenation, and constants imported across files (barrels,
+  `@/` / `~/` / `$lib/` and tsconfig `paths`). Partially known names (`'fn_' + x`) link
+  ambiguously to every matching function.
+- Wrappers: same-file and exported functions, hooks, class and object methods, and
+  destructured parameters that pass a name to a Supabase call; others go in `wrappers`.
+- Clients created with a service_role / secret key are tracked separately: their calls keep a
+  function "called", but do not justify an anon/authenticated grant and do not count as browser
+  reads.
+- `[auth.hook.*]` in config.toml and database-webhook triggers count as callers.
+
+Anything it cannot resolve (`supabase.from(tableName)`) is **counted and listed, never
+dropped**. A `// supareach: names a,b` comment above the call or its wrapper resolves it.
 
 ## Config: `supareach.config.json` (optional)
 
 ```json
 {
-  "include": ["src/**/*.{ts,tsx,js,jsx}", "supabase/functions/**/*.ts"],
-  "migrations": "supabase/migrations",
-  "functionsDir": "supabase/functions",
+  "supabaseDir": "apps/db/supabase",
+  "include": ["**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro}"],
+  "exclude": ["**/*.{test,spec}.{ts,tsx,js,jsx}", "**/__mocks__/**", "**/*.stories.*", "**/*.d.ts"],
   "exposedSchemas": ["public"],
-  "wrappers": { "rpc": ["callRpc"], "from": [], "invoke": [] },
+  "supabaseDefaultGrants": "legacy",
+  "wrappers": { "rpc": ["callRpc", { "name": "rpcWithRetry", "arg": 1 }], "from": [], "invoke": [] },
   "entryPoints": [{ "name": "stripe-webhook", "reason": "Stripe calls it" }],
   "autoEntryPoints": true,
   "ignore": {
@@ -106,15 +127,13 @@ TypeScript compiler API (syntax only, no type check), default `src/**` and
 }
 ```
 
-Every ignore and entry point needs a `reason`; a bare string is a config error. Suppressed
-findings stay visible in the report with their reason. `ignore` also has `edgeFunctions`,
-`tables` and `rpcs` lists.
+Every ignore and entry point needs a `reason`; a bare string is a config error. Unknown keys
+warn. Paths must stay inside the project. `ignore` also has `edgeFunctions`, `tables` and
+`rpcs` lists. `migrations` and `functionsDir` override the auto-detected directories.
 
-**Edge-function entry points.** Webhooks, OAuth callbacks, auth hooks and health checks have
-no caller in your code. Declare them in `entryPoints`, or put
-`// supareach: entry-point <reason>` in the function. With `autoEntryPoints` (default on),
-functions with `verify_jwt = false` in `supabase/config.toml` are treated as entry points
-with that reason. Entry points are listed in the report so the reasons stay reviewable.
+**Edge-function entry points.** Webhooks, OAuth callbacks and health checks have no caller in
+your code. Declare them in `entryPoints`, or put `// supareach: entry-point <reason>` in the
+function. With `autoEntryPoints` (default on), `verify_jwt = false` functions are entry points.
 
 **In-source hatches** (greppable):
 
@@ -129,8 +148,8 @@ with that reason. Entry points are listed in the report so the reasons stay revi
 
 ## Plugins
 
-Project rules use the same contract as the core rules and are baselined, ignored and
-reported the same way:
+Project rules use the same contract as the core rules. **Plugins are code from the
+repository: they load only with `--allow-plugins`, which is refused on pull-request events.**
 
 ```js
 // .github/supareach-rules.mjs
@@ -139,7 +158,7 @@ export const rules = [{
   level: 'error',
   title: 'Client code writes to the ledger',
   why: 'Ledger rows are written by the billing edge function only.',
-  run({ graph, catalog, config, root }) {
+  run({ graph }) {
     return graph.links
       .filter((l) => l.relation === 'from' && l.target === 'table:ledger'
         && graph.node(l.source)?.side === 'client'
@@ -150,91 +169,139 @@ export const rules = [{
 ```
 
 `graph` has `nodes`, `links`, `node(id)`, `incoming(id)`, `outgoing(id)`; `catalog` is the
-normalised schema (tables with policy text, functions with grants, cron, buckets). See
-`examples/demo-app/supareach-rules.mjs`.
+normalised schema. See `examples/demo-app/supareach-rules.mjs`.
 
 ## CI: fail when things get worse
 
 ```sh
-npx supareach --update-baseline      # writes supareach.baseline.json; commit it
-npx supareach --check --no-output    # exit 1 if any finding is not in the baseline
+npx --yes supareach@0.2.0 --update-baseline      # writes supareach.baseline.json; commit it
+npx --yes supareach@0.2.0 --check --no-output    # exit 1 if any finding is not in the baseline
 ```
 
-The baseline is a list of finding fingerprints (`<rule>:<subject>`, e.g.
-`exposed-uncalled-function:next_invoice_number/1`). `--check` fails on any error or
-warning whose fingerprint is not in it, so fixing one finding and adding another still
-fails. `--update-baseline` only removes entries from an existing baseline; adding needs
-`--force`. Exit codes: 0 clean, 1 new findings, 2 usage or tool error.
+The baseline is a list of fingerprints. `--check` fails on any error or warning not in it, so
+fixing one finding and adding another still fails. `--update-baseline` only removes entries
+from an existing baseline; adding needs `--force`. Exit codes: 0 clean, 1 new findings, 2 usage
+or tool error, or an empty scan under `--check`.
 
-GitHub Actions (annotations on the PR diff and a job summary, no permissions needed):
+GitHub Actions, hardened: read-only token, actions pinned by SHA, an exact supareach version,
+no `--db-url` and no plugins on pull requests.
 
 ```yaml
 name: supareach
 on: pull_request
+permissions:
+  contents: read
 jobs:
   supareach:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npx --yes supareach@0 --check --github --sarif supareach.sarif
-      # Optional: code scanning alerts. Needs `permissions: security-events: write`, and a
-      # GitHub Code Security license on private repositories.
-      - if: always()
-        uses: github/codeql-action/upload-sarif@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: npx --yes supareach@0.2.0 --check --github --no-plugins
+  # Optional code-scanning alerts, in their own job so only it gets security-events: write
+  # (needs GitHub Code Security on private repositories).
+  sarif:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: npx --yes supareach@0.2.0 --no-output --no-plugins --sarif supareach.sarif
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with: { sarif_file: supareach.sarif }
 ```
+
+Or use the composite action in this repository (`uses: EdanBarrios/supareach@<sha>` with
+`version`, `args` and `sarif` inputs). Run `--db-url` checks from a trusted workflow (push to
+the default branch, schedule), never from `pull_request`.
 
 ## Options
 
 ```
-supareach [dir] [--out dir] [--config file] [--baseline file] [--db-url url]
-          [--check] [--update-baseline [--force]] [--sarif file] [--github] [--no-output]
+supareach [dir] [options]
+supareach help | --demo
+  --out <dir>  --config <file>  --baseline <file>  --db-url <url>
+  --check  --update-baseline [--force]  --sarif <file>  --github  --no-output
+  --allow-plugins | --no-plugins  --demo  -h/--help  -v/--version
 ```
+
+`explain`, `path` and `init` are reserved for future subcommands.
+
+## For coding agents
+
+The repository ships a Claude Code plugin and a portable skill
+([`skills/supareach/SKILL.md`](skills/supareach/SKILL.md)):
+
+```sh
+claude plugin marketplace add EdanBarrios/supareach
+claude plugin install supareach@supareach
+```
+
+For other agents, paste [`docs/AGENTS.md`](docs/AGENTS.md) into your `AGENTS.md`.
 
 ## How it compares
 
 Use these alongside it; they answer different questions.
 
-- **Supabase Security Advisor / splinter** lints the database: for example, it flags every
-  SECURITY DEFINER function `authenticated` can execute, which in a mature app can be
-  hundreds. It cannot tell which ones the app uses; supareach narrows that to the ones with
-  no caller anywhere, which is the list worth reviewing.
+- **Supabase Security Advisor / splinter** lints the database: for example, every SECURITY
+  DEFINER function `authenticated` can execute. It cannot tell which ones the app uses;
+  supareach narrows that to the ones with no caller anywhere.
 - **supabase-grants-lint** and **eslint-plugin-supabase** check the code-to-table direction
-  ("will this `.from()` call be allowed?") and the 2026 table-grant changes, with types, in
-  the editor. They do not cover RPC reachability, edge functions, cron or storage; the
-  ESLint plugin skips `supabase/functions`.
+  with types, in the editor. They do not cover RPC reachability, edge functions, cron or
+  storage.
 - **pgrls** and **`supabase db lint`** go deep on RLS and PL/pgSQL correctness from the
   database side, with no notion of callers.
-- **Graphify**, knip, dependency-cruiser map code graphs; none links supabase-js call sites
-  to database objects. supareach's `graph.json` uses the same node-link shape so the graphs
-  can be combined.
+- **Graphify**, knip, dependency-cruiser map code graphs; `graph.json` uses the same
+  node-link shape so the graphs can be combined.
 
-## Limitations (read before acting on a finding)
+## Limitations
 
-- **v0, best effort, static analysis.** Treat findings as leads. Migration mode is lossy
-  (see above); prefer `--db-url`.
-- References in SQL bodies are found by name (`fn(`), ignoring comments and, unless the body
-  uses `EXECUTE`, string literals: `inferred`, not proven. In migration mode, references in
-  dynamic `DO` blocks count as callers (conservative).
-- Code calls resolve by name: `.rpc('f')` counts as calling every overload of `f`.
-- Names built at runtime and cross-file constants are unresolved unless configured or
-  hatched; a function reached only that way can appear uncalled. They are listed.
-- Table-level grants are read in catalog mode but not yet reported; views running with
-  owner rights (`security_invoker` off) are recorded, not yet reported.
-- Only JS/TS clients. The HTML force layout gets crowded past ~1,000 nodes; use search.
+Read these before revoking anything.
+
+- **"Nothing calls it" means "no call site supareach recognised".** Grep for the name before
+  revoking. Static analysis, no type checker: findings are leads.
+- **What is scanned:** see the summary line and the code roots it prints. Code outside
+  `include`, in excluded folders, or generated at build time is invisible. Tests, stories and
+  mocks do not count as callers by design.
+- **Patterns it does not see:** calls in Vue/Svelte template expressions (outside `<script>`),
+  names built from runtime data, wrappers more than one import hop away or behind
+  higher-order functions, clients passed through dependency injection or framework context
+  under an unrecognisable name, other languages (Python, Dart, Swift clients), and callers
+  outside the repository (other services, the dashboard, partners).
+- **Unresolved names** are listed in `report.md`; when any could reach an "uncalled" function,
+  that finding is a warning with a caveat rather than an error.
+- **Schemas:** `exposedSchemas` defaults to `public`; `.schema(<dynamic>)` matches the name in
+  any schema, ambiguously.
+- **Receivers are judged by name and binding, not type.** A non-Supabase object named like a
+  client (`client.rpc(...)`) can be mistaken for one; unknown receivers never create
+  missing-* findings.
+- **service_role** clients are recognised by the key expression (`SERVICE_ROLE`, `secret`) or a
+  conventional name (`supabaseAdmin`); a privileged client created elsewhere under another name
+  counts as a normal caller and can hide a finding.
+- **Migration replay is lossy:** dashboard changes, dynamic SQL with runtime values, and
+  extension-created objects are invisible or approximate (listed as not understood). Prefer
+  `--db-url` for gating.
+- **Parse failures** are listed in the console, `report.md` and SARIF; calls after a syntax
+  error may be missing. Files over 2 MB are skipped.
+- References inside SQL bodies are found by name (`inferred`), and `.rpc('f')` counts as
+  calling every overload of `f`.
 
 ## Development
 
 ```sh
 npm install
-npm test           # node:test; the psql layer is mocked, no database needed
-node bin/supareach.js examples/demo-app
+npm test                         # node:test; psql is faked, no database needed
+node bin/supareach.js --demo
 ```
 
-Node 18+, ESM, plain JavaScript. The only dependency is `typescript` (for its parser).
-Security: see [SECURITY.md](SECURITY.md). Changes: [CHANGELOG.md](CHANGELOG.md).
+Node 20+, ESM, plain JavaScript. The only dependency is `typescript` (for its parser). See
+[CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

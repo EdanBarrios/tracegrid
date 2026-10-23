@@ -40,7 +40,7 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
         driver: {
           name: 'supareach',
           version,
-          informationUri: 'https://www.npmjs.com/package/supareach',
+          informationUri: 'https://github.com/EdanBarrios/supareach',
           rules: r.rules.map((x) => ({
             id: x.id,
             name: x.id.replace(/[^A-Za-z0-9]+(.)?/g, (_, c) => (c ? c.toUpperCase() : '')),

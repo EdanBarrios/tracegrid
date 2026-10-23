@@ -1,17 +1,49 @@
 {
   "name": "supareach",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "description": "Map how your app code reaches your Supabase schema: tables, RPCs, edge functions, storage, grants and RLS. Static, offline, no AI.",
   "type": "module",
-  "bin": { "supareach": "bin/supareach.js" },
-  "files": ["bin", "src", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md"],
-  "engines": { "node": ">=18" },
-  "scripts": {
-    "test": "node --test test/*.test.js",
-    "demo": "node bin/supareach.js examples/demo-app"
+  "bin": {
+    "supareach": "bin/supareach.js"
   },
-  "keywords": ["supabase", "postgres", "rls", "static-analysis", "call-graph", "cli"],
+  "files": [
+    "bin",
+    "src",
+    "examples",
+    "skills",
+    ".claude-plugin",
+    "action.yml",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node test/run.mjs",
+    "demo": "node bin/supareach.js --demo"
+  },
+  "keywords": [
+    "supabase",
+    "postgres",
+    "rls",
+    "static-analysis",
+    "call-graph",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EdanBarrios/supareach.git"
+  },
+  "homepage": "https://github.com/EdanBarrios/supareach#readme",
+  "bugs": {
+    "url": "https://github.com/EdanBarrios/supareach/issues"
+  },
   "license": "MIT",
   "author": "Edan Barrios",
-  "dependencies": { "typescript": "^5.4.0" }
+  "dependencies": {
+    "typescript": "^5.4.0"
+  }
 }

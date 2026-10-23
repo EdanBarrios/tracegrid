@@ -1,0 +1,36 @@
+name: supareach
+description: Map how your app reaches its Supabase schema and fail on new findings (uncalled RPCs, client tables without RLS, ...).
+author: Edan Barrios
+branding:
+  icon: share-2
+  color: green
+inputs:
+  version:
+    description: Exact supareach version from npm. Pinned; bump deliberately.
+    default: 0.2.0
+  args:
+    description: Extra arguments. Never pass --db-url or --allow-plugins on pull_request events.
+    default: --check --github
+  working-directory:
+    description: Directory to scan.
+    default: .
+  sarif:
+    description: Write SARIF to this path ('' to skip). Uploading it needs security-events write.
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with: { node-version: 22 }
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUPAREACH_VERSION: ${{ inputs.version }}
+        SUPAREACH_ARGS: ${{ inputs.args }}
+        SUPAREACH_SARIF: ${{ inputs.sarif }}
+      run: |
+        set -euo pipefail
+        sarif=()
+        if [ -n "$SUPAREACH_SARIF" ]; then sarif=(--sarif "$SUPAREACH_SARIF"); fi
+        # shellcheck disable=SC2086
+        npx --yes "supareach@${SUPAREACH_VERSION}" $SUPAREACH_ARGS "${sarif[@]}"

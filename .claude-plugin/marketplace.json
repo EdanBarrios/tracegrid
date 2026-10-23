@@ -1,0 +1,11 @@
+{
+  "name": "supareach",
+  "owner": { "name": "Edan Barrios" },
+  "plugins": [
+    {
+      "name": "supareach",
+      "source": "./",
+      "description": "Supabase reachability: who calls X, what breaks if you revoke Y, dead RPCs and edge functions."
+    }
+  ]
+}

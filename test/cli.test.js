@@ -69,8 +69,10 @@ test('CLI writes outputs; --check gates on fingerprints, not counts', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(fs.readFileSync(baseline, 'utf8')).findings, b.findings);
 
+  // No baseline: every finding is new (exit 1), with instructions instead of a bare usage error.
   r = run(demo, '--no-output', '--baseline', path.join(tmp, 'none.json'), '--check');
-  assert.equal(r.status, 2);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no baseline[\s\S]*--update-baseline/);
   fs.writeFileSync(path.join(tmp, 'old.json'), JSON.stringify({ counts: {} }));
   r = run(demo, '--no-output', '--baseline', path.join(tmp, 'old.json'), '--check');
   assert.equal(r.status, 2);

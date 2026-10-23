@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { analyze } from '../src/analyze.js';
 import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
@@ -12,9 +13,13 @@ import { readBaseline, writeBaseline, compareBaseline, BaselineError } from '../
 import { toSarif, githubAnnotations, stepSummary } from '../src/ci.js';
 
 const HELP = `supareach [dir] [options]
+supareach --demo            run on the bundled example project
+supareach help              this text
 
 What can a signed-in user reach that no code calls? Maps how app code reaches a
 Supabase schema and reports dead or risky surface. Static, offline by default.
+Scans the whole project and auto-detects the Supabase directory; see the README
+for supareach.config.json.
 
 Options:
   --out <dir>          Output directory (default ./supareach-out)
@@ -35,14 +40,19 @@ Options:
                        repository: never use this on pull requests (refused on GitHub
                        pull_request and pull_request_target events)
   --no-plugins         Run without the plugins listed in the config
+  --demo               Analyze the example project bundled with supareach
   -h, --help           Show this help
   -v, --version        Show version
 
-Exit codes: 0 clean, 1 new findings (or a refused baseline update), 2 usage or tool error.
+Exit codes: 0 clean, 1 new findings (or a refused baseline update), 2 usage or tool
+error, or (with --check) a scan that found no code, no call sites or no migrations.
 `;
 
+/** Subcommand names kept free for later versions. */
+const RESERVED = new Set(['explain', 'path', 'init']);
+
 function parseArgs(argv) {
-  const a = { dir: '.', out: 'supareach-out', output: true };
+  const a = { dir: null, out: 'supareach-out', output: true };
   const need = (i, x) => { if (i >= argv.length || argv[i].startsWith('--')) fail(`${x} needs a value`); return argv[i]; };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
@@ -60,9 +70,15 @@ function parseArgs(argv) {
     else if (x === '--no-plugins') a.noPlugins = true;
     else if (x === '-h' || x === '--help') a.help = true;
     else if (x === '-v' || x === '--version') a.version = true;
-    else if (x.startsWith('-')) fail(`Unknown option ${x}\n\n${HELP}`);
-    else a.dir = x;
+    else if (x === '--demo') a.demo = true;
+    else if (x.startsWith('-')) fail(`Unknown option ${oneLine(x)}\n\n${HELP}`);
+    else if (a.dir === null && i === 0 && x === 'help') a.help = true;
+    else if (a.dir === null && i === 0 && RESERVED.has(x)) fail(`supareach ${x}: not available in this version (the name is reserved for a later one). See supareach --help.`);
+    else if (a.dir === null) a.dir = x;
+    else fail(`Unexpected argument ${oneLine(x)}: supareach takes one directory (got ${oneLine(a.dir)} already). Options start with --.`);
   }
+  if (a.demo && a.dir !== null) fail('--demo takes no directory');
+  if (a.dir === null) a.dir = '.';
   return a;
 }
 
@@ -80,13 +96,16 @@ async function main() {
     console.log(pkg.version); return 0;
   }
 
-  const root = path.resolve(args.dir);
+  const demo = args.demo ? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'demo-app') : null;
+  if (demo && !fs.existsSync(demo)) fail('--demo: the bundled example is missing from this installation');
+  const root = path.resolve(demo || args.dir);
   if (!fs.existsSync(root)) fail(`No such directory: ${root}`);
   let r;
   const dbUrl = args.dbUrl || process.env.SUPAREACH_DB_URL || undefined;
   if (args.allowPlugins && args.noPlugins) fail('--allow-plugins and --no-plugins are exclusive');
   if (args.allowPlugins) { const why = pluginRefusal(); if (why) fail(`supareach: ${why}`); }
-  try { r = await analyze(root, { configFile: args.config, dbUrl, allowPlugins: !!args.allowPlugins, noPlugins: !!args.noPlugins }); } catch (e) {
+  // The demo's plugin ships inside the supareach package, not in the scanned project: it is trusted.
+  try { r = await analyze(root, { configFile: args.config, dbUrl, allowPlugins: !!args.allowPlugins || (!!demo && !args.noPlugins), noPlugins: !!args.noPlugins }); } catch (e) {
     if (e instanceof ConfigError || e instanceof RuleError || e instanceof DbError) fail(oneLine(`supareach: ${e.message}`));
     throw e;
   }
@@ -109,7 +128,14 @@ async function main() {
   say(`${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
   for (const rule of r.rules) say(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
-  if (r.suppressed.length) console.log(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);
+  if (r.suppressed.length) say(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);
+  const ORDER = { error: 0, warning: 1, note: 2 };
+  const top = [...r.findings].sort((a, b) => ORDER[a.level] - ORDER[b.level]);
+  if (top.length) {
+    say('', 'Top findings:');
+    for (const f of top.slice(0, 10)) say(`  ${f.level.padEnd(7)} ${f.rule}  ${f.id}${f.at ? `  ${f.at}` : ''}${f.note ? `  (${f.note})` : ''}`);
+    if (top.length > 10) say(`  ... and ${top.length - 10} more in report.md`);
+  }
   for (const w of r.warnings) warn(`warning: ${w}`);
   for (const h of r.info.invalid_hatches) warn(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
 
@@ -141,14 +167,17 @@ async function main() {
     return 2;
   }
   if (args.check) {
-    if (!fs.existsSync(baselinePath)) fail(`--check: no baseline at ${baselinePath}. Run with --update-baseline first.`);
-    const c = compareBaseline(readBaseline(baselinePath), r);
+    let known = new Set();
+    if (fs.existsSync(baselinePath)) known = readBaseline(baselinePath);
+    else warn(`check: no baseline at ${baselinePath}, so every error and warning counts as new. To accept today's findings and fail only on new ones: supareach --update-baseline, then commit supareach.baseline.json.`);
+    const c = compareBaseline(known, r);
     fresh = c.fresh;
     for (const f of c.fresh) warn(`NEW ${f.level} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
     if (c.fixed.length) say(`${c.fixed.length} baselined finding(s) no longer present (run --update-baseline to lock that in):`, ...c.fixed.map((x) => `  ${x}`));
     if (c.fresh.length) { console.error(`check: ${c.fresh.length} new finding(s) not in the baseline`); code = 1; }
     else console.log('check: no new findings');
   }
+  if (!args.check && !args.update) say('', 'Not gating: findings do not change the exit code. Use --check (with a baseline from --update-baseline) in CI.');
   if (args.github) {
     const prefix = prefixFrom(process.env.GITHUB_WORKSPACE || process.cwd());
     for (const line of githubAnnotations(fresh || r.findings, r.rules, prefix)) console.log(line);
