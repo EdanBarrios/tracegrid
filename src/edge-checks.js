@@ -7,7 +7,7 @@ import path from 'node:path';
 import { MAX_SOURCE_FILE } from './scan-code.js';
 
 /** Calls and patterns that count as authenticating or authorising the request. */
-const AUTH_CHECK = /\.auth\s*\.\s*getUser\s*\(|\bgetClaims\s*\(|\bjwtVerify\s*\(|\bverify(?:Jwt|JWT|Token|Signature|Webhook|Hmac|Request|Auth|Caller|User)\w*\s*\(|\bconstructEvent(?:Async)?\s*\(|\b(?:check|verify|validate|assert|ensure|require)(?:Cron|Secret|Signature|Token|Auth|User|Caller|Role|Webhook|Admin|Jwt|JWT|Hmac|Session|Bearer|ApiKey|Key|Svix|Stripe|Member|Access|Permission)\w*\s*\(|\bauthori[sz]e\w*\s*\(|\bauthenticate\w*\s*\(|\bgetUser\s*\(|\btimingSafeEqual\b|crypto\s*\.\s*subtle\s*\.\s*verify\b|\bwebhooks?\s*\.\s*verify\b|\bCRON_SECRET\b/;
+const AUTH_CHECK = /\.auth\s*\.\s*getUser\s*\(|\bgetClaims\s*\(|\bjwtVerify\s*\(|\bverify(?:Jwt|JWT|Token|Signature|Webhook|Hmac|Request|Auth|Caller|User)\w*\s*\(|\bconstructEvent(?:Async)?\s*\(|\b(?:check|verify|validate|assert|ensure|require)(?:Cron|Secret|Signature|Token|Auth|User|Caller|Role|Webhook|Admin|Jwt|JWT|Hmac|Session|Bearer|ApiKey|Key|Svix|Stripe|Member|Access|Permission)\w*\s*\(|\bauthori[sz]e\w*\s*\(|\bauthenticate\w*\s*\(|\bgetUser\s*\(|\btimingSafeEqual\b|crypto\s*\.\s*subtle\s*\.\s*verify\b|\bwebhooks?\s*\.\s*verify\b|\bCRON_SECRET\b|\b\w*Auth\w*Middleware\s*\(|\bverify\w*(?:Jwt|JWT)\w*\s*\(/;
 /** Webhook verifiers under any name, svix / standard-webhooks headers, HMAC verify, constant-time compares. */
 const VERIFIER = /\bverify\w*(?:Signature|Webhook|Hmac|Token)\w*\s*\(|['"`](?:svix-signature|svix-id|webhook-signature|webhook-id)['"`]|\bnew\s+Webhook\s*\(|\bsubtle\s*\.\s*verify\b|\b(?:timingSafe\w*|constantTime\w*|safeEqual|secureCompare|timingSafeEqual)\s*\(/i;
 const CONST_TIME = /\b(?:timingSafe\w*|constantTime\w*|safeEqual|secureCompare)\s*\(/i;
@@ -119,6 +119,14 @@ function keyRpcUse(text) {
   return m ? { line: stmtLine(text, m.index), rpc: m[1], name: m[2] || m[3] } : null;
 }
 
+/** A condition that rejects the request with 401 / 403: `if (auth !== expected) return new Response('no', { status: 401 })`. */
+const REJECT = /\bif\s*\([^\n]*\)\s*\{?\s*return\s+(?:await\s+)?[^\n;]*?(?:status\s*:\s*|\(\s*)40[13]\b/g;
+function rejectGate(text) {
+  const m = REJECT.exec(text);
+  REJECT.lastIndex = 0;
+  return m ? lineAt(text, m.index) : null;
+}
+
 /** First rate-limit / attempt-claim RPC whose failure returns early. */
 function rateLimitGate(text) {
   for (const m of text.matchAll(RATE_LIMIT_RPC)) if (EARLY_EXIT.test(windowAfter(text, m.index))) return stmtLine(text, m.index);
@@ -134,6 +142,7 @@ function gatesOf(text, sharedHelpers) {
   add(callerScopedGate(text, sharedHelpers), 'caller-scoped RLS read');
   add(tokenGate(text), 'hashed token capability');
   add(rateLimitGate(text), 'rate-limit gate');
+  add(rejectGate(text), 'condition that returns 401/403');
   return out.sort((a, b) => a.line - b.line);
 }
 
@@ -217,7 +226,14 @@ export function edgeHints(root, edgeFns, files, calls) {
       }
       uses.length = 0; uses.push(...adj);
       uses.sort((a, b) => a - b);
-      const gates = gatesOf(text, shared);
+      // A gate inside a helper (above or below the handler) runs where the handler calls the helper.
+      const gates = gatesOf(text, shared).map((g) => {
+        if (handlerLine == null || g.line === handlerLine) return g;
+        const fn = outerFn(text, text.split('\n').slice(0, g.line - 1).join('\n').length + 1);
+        if (!fn) return g;
+        const call = text.split('\n').findIndex((ln, i) => i + 1 >= handlerLine && new RegExp(`\\b${esc(fn)}\\s*\\(`).test(ln) && !new RegExp(`\\b(?:function|const|let|var)\\s+${esc(fn)}\\b`).test(ln));
+        return call >= 0 ? { ...g, line: call + 1 } : g;
+      }).sort((a, b) => a.line - b.line);
       per.push({ f, text, uses, gate: gates[0] || null, keyRpc: keyRpcUse(text) });
       if (!h.requestFetch) {
         const fetchHit = requestFetch(text);

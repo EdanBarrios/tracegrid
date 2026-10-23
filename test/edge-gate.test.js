@@ -223,3 +223,29 @@ Deno.serve(async (req) => {
   } });
   assert.equal(f.length, 1);
 });
+
+test('G12 a handler wrapped in an auth middleware is gated', async () => {
+  const f = await scan(HEAD + `declare function AuthMiddleware(req: Request, next: (r: Request) => Promise<Response>): Promise<Response>;
+const admin = createClient(url, serviceKey);
+Deno.serve(async (req) => AuthMiddleware(req, async () => {
+  await admin.from('items').delete().eq('id', 1);
+  return new Response('ok');
+}));`, { verifyJwt: false });
+  assert.deepEqual(f.map((x) => x.fingerprint), []);
+});
+
+test('G13 a header check that returns 401, in a helper defined below the handler, gates where the handler calls it', async () => {
+  const body = (order) => HEAD + `const admin = createClient(url, serviceKey);
+Deno.serve(async (req) => {
+${order}
+  return new Response('ok');
+});
+const check = (req: Request) => {
+  const authorization = req.headers.get('Authorization');
+  if (authorization !== Deno.env.get('EXPECTED')) return new Response('Unauthorized', { status: 401 });
+};`;
+  const gated = await scan(body(`  const r = check(req); if (r) return r;\n  await admin.from('items').delete().eq('id', 1);`), { verifyJwt: false });
+  assert.deepEqual(gated.map((x) => x.fingerprint), []);
+  const late = await scan(body(`  await admin.from('items').delete().eq('id', 1);\n  const r = check(req); if (r) return r;`), { verifyJwt: false });
+  assert.equal(late.length, 1, 'a service-role use before the 401 check is still flagged');
+});
