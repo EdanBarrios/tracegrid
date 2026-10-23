@@ -40,7 +40,7 @@ function makeSuppressor(cfg, hatches) {
 export async function analyze(root, opts = {}) {
   root = path.resolve(root);
   const cfg = opts.config || loadConfig(root, opts.configFile);
-  const warnings = [];
+  const warnings = [...(cfg._warnings || [])];
   let plugins = opts.rules;
   if (!plugins) {
     const listed = cfg.plugins || [];

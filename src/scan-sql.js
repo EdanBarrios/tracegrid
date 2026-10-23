@@ -33,6 +33,9 @@ const bare = (n) => (n.includes('.') ? n.slice(n.indexOf('.') + 1) : n);
  * `text` (dollar bodies intact), `outer` (dollar bodies replaced by $BODY$), `bodies`, `line`.
  * Linear time; `BEGIN ATOMIC ... END` (SQL-standard function bodies) stays one statement.
  */
+const isWordCode = (c) => (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 36;
+const isWordAt = (s, i) => i >= 0 && i < s.length && isWordCode(s.charCodeAt(i));
+
 export function splitStatements(sql) {
   const out = [];
   const n = sql.length;
@@ -70,7 +73,7 @@ export function splitStatements(sql) {
       const s = sql.slice(i, j + 1);
       lines(s); both(s); i = j + 1; continue;
     }
-    if (c === '$' && !/[\w$]/.test(sql[i - 1] || '')) {
+    if (c === '$' && !isWordAt(sql, i - 1)) {
       const m = /^\$([A-Za-z_][\w]*)?\$/.exec(sql.slice(i, i + 64));
       if (m) {
         endRun(i); mark();
@@ -84,10 +87,11 @@ export function splitStatements(sql) {
       }
     }
     if (c === ';' && !atomic) { endRun(i); flush(); i++; continue; }
-    if (/[A-Za-z_]/.test(c) && !/[\w$]/.test(sql[i - 1] || '')) {
+    const cc = sql.charCodeAt(i);
+    if (((cc >= 97 && cc <= 122) || (cc >= 65 && cc <= 90) || cc === 95) && !isWordAt(sql, i - 1)) {
       mark();
       let j = i + 1;
-      while (j < n && /[\w$]/.test(sql[j])) j++;
+      while (j < n && isWordCode(sql.charCodeAt(j))) j++;
       const w = j - i <= 6 ? sql.slice(i, j).toLowerCase() : '';
       if (w === 'begin' && /^\s+atomic\b/i.test(sql.slice(j, j + 40))) atomic++;
       else if (atomic && w === 'case') atomic++;
@@ -96,7 +100,7 @@ export function splitStatements(sql) {
       i = j; continue;
     }
     if (c === '\n') line++;
-    else if (c !== ' ' && c !== '\t' && c !== '\r') mark();
+    else if (!has && c !== ' ' && c !== '\t' && c !== '\r') mark();
     if (run < 0) run = i;
     i++;
   }

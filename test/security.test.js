@@ -153,3 +153,71 @@ test('S2-1c symlinks are followed only when the target is inside the project', {
   assert.ok(!fs.readFileSync(path.join(base, 'out', 'report.md'), 'utf8').includes('leak'), r.stderr);
   rm(base);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Resource limits and parser robustness on inputs a pull request controls.
+const inChild = (code, timeout) => spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout });
+const srcUrl = (f) => JSON.stringify(new URL(`../src/${f}`, import.meta.url).href);
+
+test('S2-2 splitStatements is linear: a 200 KB statement finishes in under 2 s', () => {
+  const r = inChild(`import { splitStatements } from ${srcUrl('scan-sql.js')};
+    splitStatements('insert into t values (' + '1,'.repeat(100000) + '1)');`, 2000 + 1500);
+  assert.equal(r.status, 0, 'killed by timeout: quadratic');
+});
+
+test('S2-2b sqlRefs is linear: an 80 KB identifier finishes in under 1 s', async () => {
+  const { sqlRefs } = await import('../src/scan-sql.js');
+  const t0 = performance.now();
+  sqlRefs('a'.repeat(80000), new Set(['x']));
+  sqlRefs('a.'.repeat(40000) + '(', new Set(['x']));
+  assert.ok(performance.now() - t0 < 1000, 'quadratic scan');
+});
+
+test('S2-2c hatch comment regex is linear on trailing whitespace', async () => {
+  const { parseHatches } = await import('../src/hatches.js');
+  const t0 = performance.now();
+  parseHatches('// supareach: names x' + ' '.repeat(80000) + '*/x');
+  assert.ok(performance.now() - t0 < 1000, 'quadratic regex');
+});
+
+test('S2-2d source files over 2 MB and statements over 256 KB are skipped and listed', async () => {
+  const { scanFiles } = await import('../src/scan-code.js');
+  const { scanMigrations } = await import('../src/scan-sql.js');
+  const d = project({
+    'src/big.ts': 'export const x = supabase.rpc("a");\n'.repeat(80000),
+    'supabase/migrations/1_big.sql': `insert into t values ('${'x'.repeat(300 * 1024)}');\ncreate table ok (id int);\n`,
+  });
+  const r = scanFiles(d, ['src/big.ts'], { rpc: [], from: [], invoke: [] });
+  assert.equal(r.calls.length, 0);
+  assert.match(r.failed[0].error, /too large/);
+  const st = scanMigrations(path.join(d, 'supabase', 'migrations'));
+  assert.ok(st.tables.has('ok'));
+  assert.match(st.unparsed[0].reason, /larger than 256 KB/);
+  rm(d);
+});
+
+test('S2-3 globToRegExp terminates on an unclosed brace (treated as a literal)', () => {
+  const r = inChild(`import { globToRegExp } from ${srcUrl('config.js')};
+    const re = globToRegExp('src/{a');
+    if (!re.test('src/{a')) process.exit(3);`, 3000);
+  assert.equal(r.status, 0, r.status === 3 ? 'unclosed { not literal' : 'hung (killed by timeout)');
+});
+
+test('S3-1 SARIF percent-encodes file paths', async () => {
+  const { toSarif } = await import('../src/ci.js');
+  const r = hostileResult();
+  r.findings[0].at = 'src/weird name#1.ts:1';
+  const s = toSarif(r, { version: '0', prefix: '' });
+  assert.equal(s.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri, 'src/weird%20name%231.ts');
+});
+
+test('S3-2 __proto__ / constructor keys in the config have no effect; unknown keys warn', async () => {
+  const d = project({ 'supareach.config.json': '{ "__proto__": { "polluted": true, "include": ["x/**"] }, "constructor": { "prototype": { "p": 1 } }, "inclde": ["src/**"] }' });
+  const cfg = loadConfig(d);
+  assert.equal(cfg.polluted, undefined);
+  assert.equal(Object.getPrototypeOf(cfg), Object.prototype);
+  assert.notDeepEqual(cfg.include, ['x/**']);
+  assert.equal({}.p, undefined);
+  assert.deepEqual(cfg._warnings, ['unknown config key "inclde" (ignored)']);
+  rm(d);
+});

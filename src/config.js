@@ -56,10 +56,21 @@ export function loadConfig(root, file) {
   const p = file ? path.resolve(file) : path.join(root, 'supareach.config.json');
   const c = structuredClone(DEFAULTS);
   Object.defineProperty(c, '_dir', { value: file ? path.dirname(p) : root, enumerable: false });
+  Object.defineProperty(c, '_warnings', { value: [], enumerable: false });
   if (!fs.existsSync(p)) return c;
-  const user = JSON.parse(fs.readFileSync(p, 'utf8'));
+  let user;
+  // Keys that could reach an object's prototype are dropped while parsing.
+  try { user = JSON.parse(fs.readFileSync(p, 'utf8'), (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v)); } catch (e) { throw new ConfigError(`${p}: ${e.message}`); }
+  if (!user || typeof user !== 'object' || Array.isArray(user)) throw new ConfigError(`${p}: expected a JSON object`);
+  const plugins = Array.isArray(user.plugins) && user.plugins.length > 0;
   for (const k of Object.keys(user)) {
-    if (k === 'ignore' || k === 'wrappers') c[k] = { ...c[k], ...user[k] };
+    if (!Object.prototype.hasOwnProperty.call(DEFAULTS, k)) {
+      // Plugins may read their own keys; without plugins an unknown key is most likely a typo.
+      if (plugins) c[k] = user[k];
+      else c._warnings.push(`unknown config key "${k}" (ignored)`);
+      continue;
+    }
+    if ((k === 'ignore' || k === 'wrappers') && user[k] && typeof user[k] === 'object') c[k] = { ...c[k], ...user[k] };
     else c[k] = user[k];
   }
   validateConfig(c, p);
@@ -122,13 +133,14 @@ export function globToRegExp(glob) {
     } else if (ch === '?') re += '[^/]';
     else if (ch === '{') {
       const end = glob.indexOf('}', i);
+      if (end < 0) { re += escapeRe(ch); continue; } // unclosed brace: a literal "{"
       re += '(?:' + glob.slice(i + 1, end).split(',').map(escapeRe).join('|') + ')';
       i = end;
     } else re += escapeRe(ch);
   }
   return new RegExp('^' + re + '$');
 }
-const escapeRe = (s) => s.replace(/[.+^$()|[\]\\]/g, '\\$&');
+const escapeRe = (s) => s.replace(/[.+^$()|[\]\\{}]/g, '\\$&');
 
 /** Static prefix of a glob, used as the directory to walk. */
 function globBase(glob) {
