@@ -100,7 +100,8 @@ export const coreRules = [
       return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
         .filter(({ n }) => n && n.type === 'table' && !n.missing && !n.rls && !n.partition && reachable(n))
         .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites,
-          ...(n.rlsUncertain ? { confidence: 'low', tier: 'review', note: `low confidence: dynamic SQL at ${n.rlsUncertain} may change RLS` } : {}) }));
+          ...(n.rlsUnknown ? { confidence: 'low', tier: 'review', note: 'low confidence: the table is never created in the replayed migrations (its schema lives elsewhere, e.g. a schema dump), so its RLS state is unknown; use --db-url' }
+            : n.rlsUncertain ? { confidence: 'low', tier: 'review', note: `low confidence: dynamic SQL at ${n.rlsUncertain} may change RLS` } : {}) }));
     },
   },
   {

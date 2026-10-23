@@ -399,8 +399,8 @@ export function applyStatement(st, s, file) {
       st.tables.set(name, t);
     }
     if (t) {
-      if (/\benable\s+row\s+level\s+security\b/i.test(rest)) t.rls = true;
-      if (/\bdisable\s+row\s+level\s+security\b/i.test(rest)) t.rls = false;
+      if (/\benable\s+row\s+level\s+security\b/i.test(rest)) t.rls = t.rlsSet = true;
+      if (/\bdisable\s+row\s+level\s+security\b/i.test(rest)) { t.rls = false; t.rlsSet = true; }
       t.text += '\n' + s.text;
     }
     return void st.stats.handled++;

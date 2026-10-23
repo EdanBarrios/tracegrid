@@ -55,6 +55,8 @@ export function fromMigrations(st) {
     model: st.model,
     tables: [...st.tables.values()].map((t) => ({
       name: t.name, schema: schemaOf(t.name), rls: t.rls, external: !!t.external, text: t.text, indexText: t.indexText || '', at: loc(t),
+      // Created outside the replayed migrations with no RLS statement in them: RLS state unknown.
+      ...(t.external && !t.rlsSet ? { rlsUnknown: true } : {}),
       partition: !!t.partition, rlsUncertain: t.rlsUncertain || st.rlsUncertain || undefined, grantsUncertain: t.grantsUncertain || undefined,
       // External tables (created outside migrations) have unknown grants.
       grants: t.external ? null : grantsOf(t.grants),

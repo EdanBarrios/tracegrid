@@ -1,4 +1,5 @@
 // Build the graph and findings from code, SQL and edge-function scans.
+import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig, findFiles } from './config.js';
 import { scanFiles } from './scan-code.js';
@@ -16,6 +17,38 @@ export const SCHEMA_VERSION = 1;
 export const GRANT_NOTICE = 'Grants: assuming the legacy Supabase defaults (new tables and functions in public granted to anon/authenticated) for the replayed migrations. '
   + 'From 2026-10-30 Supabase no longer exposes new tables to the Data API automatically (CLI v2.106.0 already treats an unset [api] auto_expose_new_tables as false): '
   + 'tables added after that need an explicit GRANT in a migration. Set supabaseDefaultGrants to "legacy" or "opt-in" to choose, or use --db-url for the real ACLs.';
+
+/** Schemas Supabase creates and manages; their tables are never in a project's own schema files. */
+const SUPABASE_SCHEMAS = new Set(['auth', 'storage', 'realtime', 'extensions', 'graphql', 'graphql_public', 'vault', 'net', 'cron', 'supabase_functions', 'pgsodium']);
+
+const MAX_SCHEMA_FILE = 16 * 1024 * 1024;
+
+/** Up to three .sql files outside the migrations directory that create tables (schema dumps, scripts/, declarative schemas), likeliest first. */
+function schemaFiles(root, migrations, supabaseDir) {
+  const found = [];
+  const skip = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'vendor']);
+  let budget = 2000;
+  const walk = (dir, depth) => {
+    if (depth > 4 || budget <= 0) return;
+    let entries;
+    try { entries = fs.readdirSync(path.join(root, dir), { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (--budget <= 0) return;
+      const rel = dir ? `${dir}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (!skip.has(e.name) && !e.name.startsWith('.') && rel !== migrations && !seen.has(rel)) { seen.add(rel); walk(rel, depth + 1); } continue; }
+      if (!e.isFile() || !/\.sql$/i.test(e.name) || /^seed\.sql$/i.test(e.name) || found.includes(rel)) continue;
+      // Whole file: a pg_dump lists functions before tables. Same size cap as migrations.
+      try { if (fs.statSync(path.join(root, rel)).size <= MAX_SCHEMA_FILE && /\bcreate\s+table\b/i.test(fs.readFileSync(path.join(root, rel), 'utf8'))) found.push(rel); } catch { /* unreadable: skip */ }
+    }
+  };
+  // The Supabase directory first (schema dumps, declarative schemas), then the rest of the repository.
+  const seen = new Set();
+  const sb = supabaseDir.replace(/\/$/, '');
+  if (sb && sb !== '.') { seen.add(sb); walk(sb, 1); }
+  walk('', 0);
+  const rank = (f) => (f.startsWith(supabaseDir.replace(/\/?$/, '/')) ? 0 : 2) + (/schema|baseline|dump|init/i.test(path.posix.basename(f)) ? 0 : 1);
+  return found.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).slice(0, 3);
+}
 
 /** Config ignore list that applies to each core rule. */
 const IGNORE_CATEGORY = {
@@ -95,6 +128,15 @@ export async function analyze(root, opts = {}) {
   const byRole = (g) => (g ? { anon: [...(g.anon || [])].sort(), authenticated: [...(g.authenticated || [])].sort() } : undefined);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
   const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec, root } : { root }), replayed) : replayed;
+  if (!opts.dbUrl) {
+    const unknown = catalog.tables.filter((t) => t.rlsUnknown && !SUPABASE_SCHEMAS.has(t.schema)).map((t) => t.name);
+    if (unknown.length) {
+      const dumps = schemaFiles(root, project.migrations, project.supabaseDir);
+      notices.push(`${unknown.length} table(s) are altered, granted or given policies in the migrations but never created there (${unknown.slice(0, 3).join(', ')}${unknown.length > 3 ? ', ...' : ''}), so their RLS state is unknown and RLS findings on them are Review, not Fix. `
+        + (dumps.length ? `Their schema may live in ${dumps.join(', ')}, which tracegrid does not replay. ` : '')
+        + 'Use --db-url for the real state.');
+    }
+  }
   const edgeFns = listEdgeFunctions(root, project.functionsDir, project.toml, project.supabaseDir);
   const edgeNames = new Set(edgeFns.map((e) => e.name));
   const fnPrefix = project.functionsDir.replace(/\/$/, '') + '/';
@@ -137,7 +179,7 @@ export async function analyze(root, opts = {}) {
     node(`table:${t.name}`, 'table', t.name, {
       schema: t.schema, rls: t.rls, policies: t.policies.length, clientPolicies: permissive, defined: !t.external, at: t.at,
       ...(t.grants !== undefined ? { clientPrivs: clientPrivs(t.grants), privsByRole: byRole(t.grants), defaultGrants: defaultOnly(t.name, t.grants) } : {}),
-      ...(t.partition ? { partition: true } : {}), ...(t.rlsUncertain ? { rlsUncertain: t.rlsUncertain } : {}), ...(t.grantsUncertain ? { grantsUncertain: t.grantsUncertain } : {}),
+      ...(t.partition ? { partition: true } : {}), ...(t.rlsUnknown ? { rlsUnknown: true } : {}), ...(t.rlsUncertain ? { rlsUncertain: t.rlsUncertain } : {}), ...(t.grantsUncertain ? { grantsUncertain: t.grantsUncertain } : {}),
     });
   }
   const rlsTables = new Map(catalog.tables.filter((t) => t.rls).map((t) => [t.name, t]));

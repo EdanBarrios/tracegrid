@@ -500,3 +500,27 @@ test('R2c default privileges inside a DO block (with an exception handler) do no
   assert.ok(f && f.tier === 'fix' && !f.confidence, JSON.stringify(f));
   assert.ok(!r.info.unparsed_sql.some((u) => u.risky), JSON.stringify(r.info.unparsed_sql));
 });
+
+// ---- tables created outside the replayed migrations ----
+
+test('S-ext-1 a table the migrations only grant or give policies to has unknown RLS: Review, with a notice naming the dump', async () => {
+  const r = await run(`grant select on public.contacts to anon;
+create policy "own" on public.contacts for select to authenticated using (true);`, {
+    code: { ...from('contacts'), 'supabase/baseline.sql': 'create function public.f() returns int language sql as $$ select 1 $$;\ncreate table public.contacts (id int);\nalter table public.contacts enable row level security;\n' },
+  });
+  const f = r.findings.filter((x) => x.rule === 'client-table-without-rls');
+  assert.deepEqual(f.map((x) => [x.id, x.tier, x.confidence]), [['contacts', 'review', 'low']]);
+  assert.ok(r.notices.some((n) => /1 table\(s\) are altered.*\(contacts\).*supabase\/baseline\.sql/.test(n)), r.notices.join('\n'));
+});
+
+test('S-ext-2 an explicit DISABLE on a table created elsewhere is known: still Fix', async () => {
+  const r = await run(`alter table public.contacts disable row level security;`, { code: from('contacts') });
+  assert.deepEqual(r.findings.filter((x) => x.rule === 'client-table-without-rls').map((x) => [x.id, x.tier]), [['contacts', 'fix']]);
+  assert.ok(!r.notices.some((n) => /never created there/.test(n)));
+});
+
+test('S-ext-3 a table created in the migrations with RLS off stays Fix and gets no notice', async () => {
+  const r = await run(`create table public.contacts (id int);`, { code: from('contacts') });
+  assert.deepEqual(r.findings.filter((x) => x.rule === 'client-table-without-rls').map((x) => [x.id, x.tier]), [['contacts', 'fix']]);
+  assert.ok(!r.notices.some((n) => /never created there/.test(n)));
+});

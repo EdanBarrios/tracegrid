@@ -38,6 +38,10 @@ projects: re-run `--update-baseline` after reviewing them.
   A hashed-token capability counts as a gate only when one file hashes with sha-256 and
   compares in constant time, and the request token is read on the import chain from the
   entry point to that file.
+- Tables the migrations alter, grant or give policies to but never create (their schema lives in
+  a dump or `scripts/`) have unknown RLS: `client-table-without-rls` reports them as Review with
+  low confidence instead of Fix, and a notice names the likely schema file. On the benchmark this
+  removed 26 false Fix findings in two repositories.
 
 ### Analysis fixes (final pre-launch round)
 - Functions named in a `DO` block that creates or alters policies with `EXECUTE format(...)`

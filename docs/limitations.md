@@ -25,8 +25,10 @@ Read these before revoking anything.
   conventional name (`supabaseAdmin`); a privileged client created elsewhere under another name
   counts as a normal caller and can hide a finding.
 - **Migration replay is lossy:** dashboard changes, dynamic SQL with runtime values, and
-  extension-created objects are invisible or approximate (listed as not understood). Prefer
-  `--db-url` for gating.
+  extension-created objects are invisible or approximate (listed as not understood). Only the
+  migrations directory is replayed: a table whose `CREATE TABLE` lives in a schema dump
+  (`baseline.sql`), `scripts/*.sql` or anywhere else has unknown RLS, so RLS findings on it are
+  Review, and a notice names the likely file. Prefer `--db-url` for gating.
 - **Parse failures** are listed in the console, `report.md` and SARIF; calls after a syntax
   error may be missing. Files over 2 MB are skipped.
 - References inside SQL bodies are found by name (`inferred`), and `.rpc('f')` counts as
