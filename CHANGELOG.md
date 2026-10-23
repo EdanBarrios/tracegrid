@@ -55,6 +55,11 @@ projects: re-run `--update-baseline` after reviewing them.
   `ReturnType<typeof factory>`, and wrappers that take the client as a parameter. A helper that can
   return a browser client stays a browser caller. On the benchmark this removed 20 false Review
   findings in one repository.
+- `edge-service-role-before-auth` recognises auth middleware wrappers (`AuthMiddleware(req, ...)`),
+  `verify*Jwt(` calls and conditions that return 401/403, and counts a gate inside a helper at the
+  line where the handler calls it.
+- Large monorepos scan several times faster (module resolution and declaration lookups are
+  memoized): 266 s to 47 s on a repository with 1,234 migrations.
 - A URL whose name continues with a runtime part (`/rest/v1/rpc/get_${kind}`,
   `/functions/v1/report-` + kind) is a name pattern, not a call to the literal prefix.
 
