@@ -10,6 +10,8 @@ function clientTables(graph) {
   return m;
 }
 
+/** Can anon or authenticated reach the relation at all? Unknown grants count as reachable. */
+const reachable = (n) => !Array.isArray(n.clientPrivs) || n.clientPrivs.length > 0;
 const callers = (graph, id) => graph.incoming(id).filter((e) => e.source !== id);
 const exposed = (config) => new Set(config.exposedSchemas || ['public']);
 /** Functions in an exposed schema that anon or authenticated can execute. */
@@ -26,6 +28,16 @@ function caveat(f, sites, what) {
   const first = sites[0];
   return { ...f, level: f.level === 'note' ? 'note' : 'warning', note: `${sites.length} unresolved ${what} call site(s) with a dynamic name could reach it (first: ${first.file}:${first.line}); check them before revoking` };
 }
+/**
+ * SECURITY INVOKER and callable by authenticated only: runs with the caller's privileges, so RLS and
+ * grants still apply; a warning. SECURITY DEFINER, or callable by anon (no sign-in): an error.
+ */
+function severity(f, n) {
+  if (n.securityDefiner || n.anon) return { ...f, level: 'error' };
+  return { ...f, level: 'warning', note: 'SECURITY INVOKER, authenticated only: runs with the caller\'s privileges' };
+}
+/** Relations through which the calling role itself executes the helper (so it needs EXECUTE). */
+const NEEDS_GRANT = new Set(['policy-uses', 'view-uses', 'default-uses', 'index-uses']);
 const fnFinding = (n, extra = {}) => ({ id: n.id.slice(3), node: n.id, at: n.at, roles: ['anon', 'authenticated'].filter((r) => n[r]), securityDefiner: n.securityDefiner, ...extra });
 
 export const coreRules = [
@@ -36,7 +48,7 @@ export const coreRules = [
     why: 'No `.rpc()` in code, and no cron job, trigger, policy, view or other SQL function references them. Each is surface any signed-in (or anonymous) user can call through the Data API. Revoke the grant, or ignore it with a reason if a caller is coming.',
     run({ graph, config, unresolved }) {
       return grantedFunctions(graph, config).filter((n) => callers(graph, n.id).length === 0)
-        .map((n) => caveat(fnFinding(n), couldReach(unresolved, 'rpc', n.label.split('.').pop()), '.rpc()'));
+        .map((n) => caveat(severity(fnFinding(n), n), couldReach(unresolved, 'rpc', n.label.split('.').pop()), '.rpc()'));
     },
   },
   {
@@ -48,7 +60,17 @@ export const coreRules = [
       return grantedFunctions(graph, config)
         .map((n) => ({ n, inc: callers(graph, n.id) }))
         .filter(({ inc }) => inc.length && !inc.some((e) => e.relation === 'rpc'))
-        .map(({ n, inc }) => fnFinding(n, { usedBy: [...new Set(inc.map((e) => e.relation))].sort() }));
+        .map(({ n, inc }) => {
+          const usedBy = [...new Set(inc.map((e) => e.relation))].sort();
+          // Does any caller run it as the requesting role? Policies, views, defaults, index expressions,
+          // and SQL in non-definer functions (triggers included) do; cron and definer functions do not.
+          const needsGrant = inc.some((e) => NEEDS_GRANT.has(e.relation) || ((e.relation === 'sql-call' || e.relation === 'trigger') && !(graph.node(e.source) || {}).securityDefiner));
+          const f = fnFinding(n, { usedBy });
+          if (n.securityDefiner && (n.anon || !needsGrant)) {
+            return { ...f, level: 'warning', note: `SECURITY DEFINER and directly callable through /rpc by ${f.roles.join(', ')}${needsGrant ? '' : '; no caller needs that grant'}. Revoke it, or move the function to a schema the Data API does not expose` };
+          }
+          return f;
+        });
     },
   },
   {
@@ -58,18 +80,41 @@ export const coreRules = [
     why: 'App code outside edge functions queries these, and row level security is not enabled on them.',
     run({ graph }) {
       return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
-        .filter(({ n }) => n && n.type === 'table' && !n.missing && !n.rls)
+        .filter(({ n }) => n && n.type === 'table' && !n.missing && !n.rls && !n.partition && reachable(n))
+        .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites,
+          ...(n.rlsUncertain ? { confidence: 'low', note: `low confidence: dynamic SQL at ${n.rlsUncertain} may change RLS` } : {}) }));
+    },
+  },
+  {
+    id: 'client-table-not-granted',
+    level: 'warning',
+    title: 'Client-touched tables that anon and authenticated have no privileges on',
+    why: 'App code queries these, but neither anon nor authenticated holds SELECT, INSERT, UPDATE or DELETE on them, so the calls fail with "permission denied". Expected for tables created after Supabase stopped granting new tables to the Data API by default: add an explicit GRANT (with RLS) if the client should reach it.',
+    run({ graph }) {
+      return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
+        .filter(({ n }) => n && (n.type === 'table' || n.type === 'view') && !n.missing && Array.isArray(n.clientPrivs) && !n.clientPrivs.length)
         .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites }));
+    },
+  },
+  {
+    id: 'client-view-without-security-invoker',
+    level: 'error',
+    title: 'Client-read views that bypass RLS (owner rights)',
+    why: 'App code reads these views, and they run with the view owner\'s rights (no `security_invoker`, or materialized), over tables that have RLS. The owner (postgres) bypasses RLS, so every row is returned to anon/authenticated. Recreate the view `with (security_invoker = true)`, or revoke it from anon/authenticated.',
+    run({ graph }) {
+      return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
+        .filter(({ n }) => n && n.type === 'view' && !n.securityInvoker && n.readsRls && reachable(n))
+        .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites, message: `reads ${n.readsRls.join(', ')}${n.materialized ? '; materialized views never apply RLS' : ''}` }));
     },
   },
   {
     id: 'client-table-without-policies',
     level: 'warning',
-    title: 'Client-touched tables with RLS on but no policies',
-    why: 'RLS with no policy denies everything to anon and authenticated. Usually a bug if the client reads it.',
+    title: 'Client-touched tables with RLS on but no policy for anon/authenticated',
+    why: 'RLS with no permissive policy that applies to anon, authenticated or PUBLIC denies everything to the client (restrictive policies alone, or policies only for other roles such as service_role, return no rows). Usually a bug if the client reads it.',
     run({ graph }) {
       return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
-        .filter(({ n }) => n && n.type === 'table' && !n.missing && n.rls && !n.policies)
+        .filter(({ n }) => n && n.type === 'table' && !n.missing && n.rls && !(n.clientPolicies ?? n.policies) && reachable(n))
         .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites }));
     },
   },

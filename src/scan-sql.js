@@ -1,47 +1,66 @@
 // Parse supabase/migrations/*.sql in order and replay them into a final schema state.
 // Regex over a light tokenizer: conservative, and anything it does not understand is reported.
+//
+// Privileges follow Postgres: default privileges have a global layer and per-schema layers that only
+// add to each other (ALTER DEFAULT PRIVILEGES); EXECUTE and table privileges are inherited through
+// role membership; GRANT/REVOKE ON ALL FUNCTIONS|PROCEDURES|ROUTINES touch only that kind.
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseHatches } from './hatches.js';
 import { isInside } from './safe.js';
 
-const IDENT = String.raw`(?:"[^"]+"|[A-Za-z_][\w$]*)`;
+const IDENT = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)`;
 const QNAME = String.raw`(${IDENT}(?:\s*\.\s*${IDENT})?)`;
 const FN_URL = /\/functions\/v1\/([A-Za-z0-9_-]+)/g;
+/** Files the Supabase CLI applies as migrations (pkg/migration/file.go). */
+export const MIGRATION_FILE = /^([0-9]+)_(.*)\.sql$/;
+export const MAX_STATEMENT = 256 * 1024;
+export const MAX_MIGRATION_FILE = 2 * 1024 * 1024;
 
-/** Normalise a possibly-qualified identifier: unquote, lowercase, drop `public.`. */
+/** Normalise a possibly-qualified identifier: unquote, lowercase unquoted parts, drop `public.`. */
 export function normName(s) {
-  const parts = s.split(/\s*\.\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((p) => (p.startsWith('"') ? p.slice(1, -1) : p.toLowerCase()));
+  const parts = s.split(/\s*\.\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((p) => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p.toLowerCase()));
   if (parts.length === 2 && parts[0] === 'public') return parts[1];
   return parts.join('.');
 }
+/** Schema of a normalised name. */
+const schemaOfName = (n) => (n.includes('.') ? n.slice(0, n.indexOf('.')) : 'public');
+const qualify = (schema, name) => (schema === 'public' ? name : `${schema}.${name}`);
+const bare = (n) => (n.includes('.') ? n.slice(n.indexOf('.') + 1) : n);
 
 /**
  * Split SQL into statements, removing comments. Each statement has
  * `text` (dollar bodies intact), `outer` (dollar bodies replaced by $BODY$), `bodies`, `line`.
+ * Linear time; `BEGIN ATOMIC ... END` (SQL-standard function bodies) stays one statement.
  */
 export function splitStatements(sql) {
   const out = [];
-  let i = 0, line = 1, startLine = 1;
-  let text = '', outer = '', bodies = [];
   const n = sql.length;
+  let i = 0, line = 1, startLine = 1, has = false, atomic = 0, run = -1;
+  let text = [], outer = [], bodies = [];
+  const both = (s) => { text.push(s); outer.push(s); };
+  const endRun = (end) => { if (run >= 0 && end > run) both(sql.slice(run, end)); run = -1; };
+  const mark = () => { if (!has) { has = true; startLine = line; } };
   const flush = () => {
-    if (text.trim()) out.push({ text: text.trim(), outer: outer.trim(), bodies, line: startLine });
-    text = ''; outer = ''; bodies = [];
+    const t = text.join('').trim();
+    if (t) out.push({ text: t, outer: outer.join('').trim(), bodies, line: startLine });
+    text = []; outer = []; bodies = []; has = false; atomic = 0;
   };
+  const lines = (s) => { for (let k = s.indexOf('\n'); k >= 0; k = s.indexOf('\n', k + 1)) line++; };
   while (i < n) {
     const c = sql[i];
-    if (!text.trim()) startLine = line;
-    if (c === '-' && sql[i + 1] === '-') { while (i < n && sql[i] !== '\n') i++; continue; }
+    if (c === '-' && sql[i + 1] === '-') { endRun(i); const e = sql.indexOf('\n', i); i = e < 0 ? n : e; continue; }
     if (c === '/' && sql[i + 1] === '*') {
+      endRun(i);
       let depth = 1; i += 2;
       while (i < n && depth) {
         if (sql[i] === '/' && sql[i + 1] === '*') { depth++; i += 2; } else if (sql[i] === '*' && sql[i + 1] === '/') { depth--; i += 2; } else { if (sql[i] === '\n') line++; i++; }
       }
-      text += ' '; outer += ' '; continue;
+      both(' '); continue;
     }
     if (c === "'" || c === '"') {
-      const escBackslash = c === "'" && /[eE]$/.test(text) && !/\w[eE]$/.test(text);
+      endRun(i); mark();
+      const escBackslash = c === "'" && /[eE]/.test(sql[i - 1] || '') && !/\w/.test(sql[i - 2] || '');
       let j = i + 1;
       while (j < n) {
         if (escBackslash && sql[j] === '\\') { j += 2; continue; }
@@ -49,25 +68,39 @@ export function splitStatements(sql) {
         j++;
       }
       const s = sql.slice(i, j + 1);
-      line += (s.match(/\n/g) || []).length;
-      text += s; outer += s; i = j + 1; continue;
+      lines(s); both(s); i = j + 1; continue;
     }
-    if (c === '$') {
+    if (c === '$' && !/[\w$]/.test(sql[i - 1] || '')) {
       const m = /^\$([A-Za-z_][\w]*)?\$/.exec(sql.slice(i, i + 64));
-      if (m && !/[\w$]$/.test(text)) {
+      if (m) {
+        endRun(i); mark();
         const tag = m[0];
         const end = sql.indexOf(tag, i + tag.length);
         const stop = end < 0 ? n : end + tag.length;
         const s = sql.slice(i, stop);
-        line += (s.match(/\n/g) || []).length;
+        lines(s);
         bodies.push(sql.slice(i + tag.length, end < 0 ? n : end));
-        text += s; outer += ' $BODY$ '; i = stop; continue;
+        text.push(s); outer.push(' $BODY$ '); i = stop; continue;
       }
     }
-    if (c === ';') { flush(); i++; continue; }
+    if (c === ';' && !atomic) { endRun(i); flush(); i++; continue; }
+    if (/[A-Za-z_]/.test(c) && !/[\w$]/.test(sql[i - 1] || '')) {
+      mark();
+      let j = i + 1;
+      while (j < n && /[\w$]/.test(sql[j])) j++;
+      const w = j - i <= 6 ? sql.slice(i, j).toLowerCase() : '';
+      if (w === 'begin' && /^\s+atomic\b/i.test(sql.slice(j, j + 40))) atomic++;
+      else if (atomic && w === 'case') atomic++;
+      else if (atomic && w === 'end') atomic--;
+      if (run < 0) run = i;
+      i = j; continue;
+    }
     if (c === '\n') line++;
-    text += c; outer += c; i++;
+    else if (c !== ' ' && c !== '\t' && c !== '\r') mark();
+    if (run < 0) run = i;
+    i++;
   }
+  endRun(n);
   flush();
   return out;
 }
@@ -137,10 +170,28 @@ function matchParenDollar(s, open) {
   return -1;
 }
 
-const ROLES = ['public', 'anon', 'authenticated'];
+
+/** Role list of a GRANT/REVOKE/policy: lowercased unless quoted. */
 function parseRoles(s) {
-  return s.replace(/\bwith\s+grant\s+option\b/i, '').replace(/\bgranted\s+by\s+\S+/i, '').replace(/\b(cascade|restrict)\b/gi, '')
-    .split(',').map((r) => r.trim().replace(/^group\s+/i, '').replace(/"/g, '').toLowerCase()).filter(Boolean);
+  return s.replace(/\bwith\s+(grant|admin|inherit|set)\s+(option|true|false)\b/gi, '').replace(/\bgranted\s+by\s+\S+/i, '').replace(/\b(cascade|restrict)\b/gi, '')
+    .split(',').map((r) => r.trim().replace(/^group\s+/i, '')).filter(Boolean)
+    .map((r) => (r.startsWith('"') ? r.slice(1, -1) : r.toLowerCase()));
+}
+
+/** Roles whose privileges `role` has: itself, PUBLIC, and every role it is (transitively) a member of. */
+export function roleClosure(members, role) {
+  const out = new Set([role, 'public']);
+  const stack = [role];
+  while (stack.length) for (const g of (members && members.get(stack.pop())) || []) if (!out.has(g)) { out.add(g); stack.push(g); }
+  return out;
+}
+/** Can `role` execute with these grants (role -> bool), given role membership? */
+export const canExec = (grants, role, members) => [...roleClosure(members, role)].some((r) => grants[r]);
+/** Table privileges (role -> Set) `role` holds, given membership. */
+export function tablePrivs(grants, role, members) {
+  const out = new Set();
+  for (const r of roleClosure(members, role)) for (const p of (grants && grants[r]) || []) out.add(p);
+  return [...out].sort();
 }
 
 const TYPE_ALIAS = { int: 'integer', int4: 'integer', int8: 'bigint', int2: 'smallint', bool: 'boolean', varchar: 'character varying', float8: 'double precision', float4: 'real', timestamptz: 'timestamp with time zone', 'timestamp without time zone': 'timestamp', timetz: 'time with time zone', decimal: 'numeric', char: 'character' };
@@ -179,11 +230,12 @@ function pickOverloads(f, argsParen, st, loc, o, quiet) {
   return [...f.sigs.values()];
 }
 
+
 /** Summary of a function across its overloads. */
 export function fnSummary(f) {
   const ovs = [...f.sigs.values()];
   const last = ovs.reduce((a, b) => (b.file > a.file || (b.file === a.file && b.line > a.line) ? b : a));
-  const can = (role) => ovs.some((ov) => !!(ov.grants[role] || ov.grants.public));
+  const can = (role) => ovs.some((ov) => canExec(ov.grants, role, f.members));
   return {
     name: f.name, overloads: ovs.length, args: last.args, returns: last.returns, kind: last.kind,
     securityDefiner: ovs.some((ov) => ov.securityDefiner), anon: can('anon'), authenticated: can('authenticated'),
@@ -200,22 +252,76 @@ function fnList(s) {
   }).filter(Boolean);
 }
 
+
+const TABLE_PRIVS = ['select', 'insert', 'update', 'delete'];
+const CLIENT_ROLES = ['anon', 'authenticated', 'service_role'];
+
+/** Grant model: 'legacy' (Supabase per-schema grants in public), 'opt-in' (2026 default: none), or false (vanilla Postgres). */
+export function grantModel(v) {
+  if (v === false || v === 'false' || v === 'vanilla') return false;
+  if (v === 'opt-in') return 'opt-in';
+  return 'legacy';
+}
+
+/**
+ * Default privileges. `global` applies in every schema; `schema[s]` only in s. At creation the
+ * object gets the union of both (Postgres: per-schema defaults only add to the global ones).
+ * PUBLIC's EXECUTE on functions is a global default; Supabase's grants to anon/authenticated/
+ * service_role are per-schema in `public` (legacy model).
+ */
+function defaultLayers(model) {
+  const layer = () => ({ functions: {}, tables: {} });
+  const global = layer();
+  global.functions.public = true;
+  const schema = new Map();
+  if (model === 'legacy') {
+    const pub = layer();
+    for (const r of CLIENT_ROLES) { pub.functions[r] = true; pub.tables[r] = new Set(TABLE_PRIVS); }
+    schema.set('public', pub);
+  }
+  return { global, schema };
+}
+const layerFor = (st, schema) => {
+  if (schema == null) return st.defaults.global;
+  if (!st.defaults.schema.has(schema)) st.defaults.schema.set(schema, { functions: {}, tables: {} });
+  return st.defaults.schema.get(schema);
+};
+function newFnGrants(st, schema) {
+  const g = {};
+  for (const l of [st.defaults.global, st.defaults.schema.get(schema)]) if (l) for (const [r, v] of Object.entries(l.functions)) if (v) g[r] = true;
+  return g;
+}
+function newTableGrants(st, schema) {
+  const g = {};
+  for (const l of [st.defaults.global, st.defaults.schema.get(schema)]) if (l) for (const [r, v] of Object.entries(l.tables)) for (const p of v) (g[r] ||= new Set()).add(p);
+  return g;
+}
+
 /**
  * @typedef {{ name: string, args: string, returns: string, securityDefiner: boolean, kind: 'function'|'procedure',
  *   grants: Record<string, boolean>, body: string, file: string, line: number }} SqlFunction
  */
 
 export function createState(opts = {}) {
-  const sb = opts.supabaseDefaultGrants !== false;
+  const model = grantModel(opts.supabaseDefaultGrants);
+  const members = new Map();
   return {
+    model, members,
     tables: new Map(), views: new Map(), functions: new Map(), triggers: new Map(), cron: new Map(), dynamic: [],
     hatches: { suppress: [], invalid: [] },
-    defaults: { public: true, anon: sb, authenticated: sb },
+    defaults: defaultLayers(model),
+    dynamicApplied: [], rlsUncertain: null,
     unparsed: [], skipped: [], stats: { files: 0, statements: 0, handled: 0, ignored: 0, doBlocks: 0 },
   };
 }
+const fnEntry = (st, name) => {
+  let f = st.functions.get(name);
+  if (!f) { f = { name, sigs: new Map(), members: st.members }; st.functions.set(name, f); }
+  return f;
+};
+const newTable = (st, name, loc, extra = {}) => ({ name, rls: false, policies: new Map(), text: '', indexText: '', grants: newTableGrants(st, schemaOfName(name)), ...loc, ...extra });
 
-const IGNORE_RE = /^(create\s+(unique\s+)?index|create\s+(schema|extension|type|domain|sequence|collation|publication|server|foreign|cast|aggregate|operator)|alter\s+(type|sequence|schema|extension|publication|database|role|domain|index|default\s+privileges\s+.*\bon\s+(tables|sequences|types))|drop\s+(index|type|schema|extension|sequence|domain)|comment\s+on|insert\s|update\s|delete\s|with\s|select\s|set\s|reset\s|begin|commit|rollback|start\s+transaction|notify|analyze|vacuum|truncate|refresh\s+materialized|lock\s|grant\s+(?!.*\b(execute|all)\b).*\bon\s+(table|schema|sequence|all\s+(tables|sequences))|revoke\s+(?!.*\b(execute|all)\b).*\bon\s+(table|schema|sequence|all\s+(tables|sequences))|grant\s+(usage|select|insert|update|delete|references|trigger|truncate)\b|revoke\s+(usage|select|insert|update|delete|references|trigger|truncate)\b|grant\s+[\w"]+\s+to\s|security\s+label|create\s+role|alter\s+role|call\s)/i;
+const IGNORE_RE = /^(create\s+(schema|extension|type|domain|sequence|collation|publication|server|foreign\s+data|cast|aggregate|operator|text\s+search)|alter\s+(type|sequence|schema|extension|publication|database|role|domain|index|default\s+privileges\s+.*\bon\s+(sequences|types|schemas))|drop\s+(index|type|schema|extension|sequence|domain)|comment\s+on|insert\s|update\s|delete\s|with\s|select\s|set\s|reset\s|begin|commit|rollback|start\s+transaction|notify|analyze|vacuum|truncate|refresh\s+materialized|lock\s|reindex|cluster|grant\s+(?!.*\b(execute|all)\b).*\bon\s+(schema|sequence|all\s+sequences|database|type|domain|language|foreign)|revoke\s+(?!.*\b(execute|all)\b).*\bon\s+(schema|sequence|all\s+sequences|database|type|domain|language|foreign)|grant\s+(usage|references|trigger|truncate)\b|revoke\s+(usage|references|trigger|truncate)\b|security\s+label|create\s+role|alter\s+role|drop\s+role|call\s)/i;
 
 /** Apply one statement to the state. */
 export function applyStatement(st, s, file) {
@@ -233,26 +339,7 @@ export function applyStatement(st, s, file) {
 
   if ((m = /^do\b/i.exec(o))) {
     st.stats.doBlocks++;
-    for (const body of s.bodies) {
-      if (/\bexecute\b/i.test(body)) {
-        st.dynamic.push({ text: body, ...loc });
-        if (dynamicGrantLoop(st, body, loc)) continue;
-      }
-      for (const inner of splitStatements(body)) {
-        const t = inner.outer.replace(/\s+/g, ' ');
-        const k = /\b(create\s+(or\s+replace\s+)?(policy|function|procedure|table|view|trigger)\b|alter\s+default\s+privileges\b|alter\s+(table|function|policy|view)\b|drop\s+(policy|function|table|view|trigger)\b|grant\s|revoke\s)/i.exec(t);
-        if (k && (/\bexecute\b/i.test(t.slice(0, k.index)) || /%[IsL]|\$\d|\|\|/.test(t.slice(k.index)))) {
-          st.unparsed.push({ ...loc, line: s.line + inner.line - 1, reason: 'dynamic SQL (EXECUTE) in DO block', text: short(inner.text), risky: RISKY_RE.test(inner.text) });
-        } else if (k) {
-          const off = inner.outer.search(new RegExp(k[0].replace(/\s+/g, '\\s+'), 'i'));
-          applyStatement(st, { ...inner, text: inner.text, outer: inner.outer.slice(off), line: s.line + inner.line - 1 }, file);
-        } else if (/\bexecute\b/i.test(t) && /\b(create|grant|revoke|alter|drop)\b/i.test(inner.text)) {
-          st.unparsed.push({ ...loc, reason: 'dynamic SQL (EXECUTE) in DO block', text: short(inner.text), risky: RISKY_RE.test(inner.text) });
-        } else if (/\bcron\s*\.\s*(schedule|unschedule)/i.test(inner.text)) {
-          handleCron(st, inner.text, loc);
-        }
-      }
-    }
+    for (const body of s.bodies) doBlock(st, body, loc, file);
     return;
   }
 
@@ -260,14 +347,16 @@ export function applyStatement(st, s, file) {
   if ((m = new RegExp(String.raw`^create\s+(?:(?:global\s+|local\s+)?(temp|temporary)\s+|unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?` + QNAME, 'i').exec(o))) {
     if (m[1]) return void st.stats.ignored++;
     const name = normName(m[2]);
-    if (!st.tables.has(name)) st.tables.set(name, { name, rls: false, policies: new Map(), text: s.text, ...loc });
+    const partition = /\bpartition\s+of\b/i.test(o.slice(m[0].length, m[0].length + 200));
+    if (!st.tables.has(name)) st.tables.set(name, newTable(st, name, loc, { text: s.text, partition }));
     else st.tables.get(name).text += '\n' + s.text;
     return void st.stats.handled++;
   }
   // CREATE VIEW
   if ((m = new RegExp(String.raw`^create\s+(or\s+replace\s+)?(?:temp(?:orary)?\s+)?(?:recursive\s+)?(materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?` + QNAME, 'i').exec(o))) {
     const name = normName(m[3]);
-    st.views.set(name, { name, materialized: !!m[2], securityInvoker: /security_invoker\s*=?\s*(true|on|1|'true'|'on')/i.test(o), text: s.text, ...loc });
+    const prev = st.views.get(name);
+    st.views.set(name, { name, materialized: !!m[2], securityInvoker: /security_invoker\s*=?\s*(true|on|1|'true'|'on')/i.test(o), text: s.text, grants: prev ? prev.grants : newTableGrants(st, schemaOfName(name)), ...loc });
     return void st.stats.handled++;
   }
   // ALTER VIEW
@@ -277,7 +366,9 @@ export function applyStatement(st, s, file) {
     const v = st.views.get(name);
     let r;
     if ((r = new RegExp(String.raw`^rename\s+to\s+` + QNAME, 'i').exec(rest))) {
-      if (v) { st.views.delete(name); v.name = normName(r[1]); st.views.set(v.name, v); }
+      if (v) { st.views.delete(name); v.name = qualify(schemaOfName(name), bare(normName(r[1]))); st.views.set(v.name, v); }
+    } else if ((r = new RegExp(String.raw`^set\s+schema\s+(${IDENT})`, 'i').exec(rest))) {
+      if (v) { st.views.delete(name); v.name = qualify(normName(r[1]), bare(name)); st.views.set(v.name, v); }
     } else if (/security_invoker/i.test(rest) && v) {
       v.securityInvoker = /^set\b/i.test(rest) && /security_invoker\s*=?\s*(true|on|1|'true'|'on')/i.test(rest);
     }
@@ -290,13 +381,17 @@ export function applyStatement(st, s, file) {
     let t = st.tables.get(name);
     let r;
     if ((r = new RegExp(String.raw`^rename\s+to\s+` + QNAME, 'i').exec(rest))) {
-      if (t) { st.tables.delete(name); t.name = normName(r[1]); st.tables.set(t.name, t); }
+      if (t) { st.tables.delete(name); t.name = qualify(schemaOfName(name), bare(normName(r[1]))); st.tables.set(t.name, t); }
       else st.unparsed.push({ ...loc, reason: `rename of unknown table ${name}`, text: short(o) });
+      return void st.stats.handled++;
+    }
+    if ((r = new RegExp(String.raw`^set\s+schema\s+(${IDENT})`, 'i').exec(rest))) {
+      if (t) { st.tables.delete(name); t.name = qualify(normName(r[1]), bare(name)); st.tables.set(t.name, t); }
       return void st.stats.handled++;
     }
     if (!t && /row\s+level\s+security/i.test(rest)) {
       // table created outside migrations (or a view/partition); still track RLS state
-      t = { name, rls: false, policies: new Map(), text: '', external: true, ...loc };
+      t = newTable(st, name, loc, { external: true });
       st.tables.set(name, t);
     }
     if (t) {
@@ -315,6 +410,12 @@ export function applyStatement(st, s, file) {
     }
     return void st.stats.handled++;
   }
+  // CREATE INDEX: functions used in index expressions are used.
+  if ((m = new RegExp(String.raw`^create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:(?:if\s+not\s+exists\s+)?${IDENT}\s+)?on\s+(?:only\s+)?` + QNAME, 'i').exec(o))) {
+    const t = st.tables.get(normName(m[1]));
+    if (t) t.indexText += '\n' + s.text;
+    return void st.stats.handled++;
+  }
   // CREATE FUNCTION / PROCEDURE (overloads tracked by argument-type signature)
   if ((m = new RegExp(String.raw`^create\s+(or\s+replace\s+)?(function|procedure)\s+` + QNAME + String.raw`\s*\(`, 'i').exec(o))) {
     const name = normName(m[3]);
@@ -325,13 +426,12 @@ export function applyStatement(st, s, file) {
     const ret = /^\s*returns\s+(setof\s+)?(table\s*\(|[\w."]+(?:\s*\[\])?)/i.exec(after);
     const returns = ret ? (ret[1] || '').toLowerCase() + ret[2].replace(/\s*\($/, '').replace(/"/g, '').toLowerCase() : (m[2].toLowerCase() === 'procedure' ? 'void' : '?');
     const sig = sigOf(args);
-    let f = st.functions.get(name);
-    if (!f) { f = { name, sigs: new Map() }; st.functions.set(name, f); }
+    const f = fnEntry(st, name);
     const prev = f.sigs.get(sig);
     f.sigs.set(sig, {
       sig, args, returns, kind: m[2].toLowerCase(),
       securityDefiner: /\bsecurity\s+definer\b/i.test(after),
-      grants: prev ? prev.grants : { ...st.defaults },
+      grants: prev ? prev.grants : newFnGrants(st, schemaOfName(name)),
       body: s.bodies.length ? s.bodies.join('\n') : after,
       ...loc,
     });
@@ -345,13 +445,14 @@ export function applyStatement(st, s, file) {
     let r;
     if (!f) { st.unparsed.push({ ...loc, reason: `alter of unknown function ${name}`, text: short(o) }); return void st.stats.handled++; }
     const ovs = pickOverloads(f, m[3], st, loc, o);
-    if ((r = new RegExp(String.raw`^rename\s+to\s+(${IDENT})`, 'i').exec(rest))) {
-      const to = normName(r[1]);
-      let g = st.functions.get(to);
-      if (!g) { g = { name: to, sigs: new Map() }; st.functions.set(to, g); }
+    const move = (to) => {
+      const g = fnEntry(st, to);
       for (const ov of ovs) { f.sigs.delete(ov.sig); g.sigs.set(ov.sig, ov); }
       if (!f.sigs.size) st.functions.delete(name);
-    } else if (/\bsecurity\s+definer\b/i.test(rest)) ovs.forEach((ov) => { ov.securityDefiner = true; });
+    };
+    if ((r = new RegExp(String.raw`^rename\s+to\s+(${IDENT})`, 'i').exec(rest))) move(qualify(schemaOfName(name), normName(r[1])));
+    else if ((r = new RegExp(String.raw`^set\s+schema\s+(${IDENT})`, 'i').exec(rest))) move(qualify(normName(r[1]), bare(name)));
+    else if (/\bsecurity\s+definer\b/i.test(rest)) ovs.forEach((ov) => { ov.securityDefiner = true; });
     else if (/\bsecurity\s+invoker\b/i.test(rest)) ovs.forEach((ov) => { ov.securityDefiner = false; });
     return void st.stats.handled++;
   }
@@ -374,17 +475,17 @@ export function applyStatement(st, s, file) {
   if ((m = new RegExp(String.raw`^create\s+policy\s+(${IDENT})\s+on\s+` + QNAME + String.raw`(.*)$`, 'i').exec(o))) {
     const pname = m[1].replace(/^"|"$/g, '');
     const table = normName(m[2]);
-    const rest = m[3];
-    const cmd = (/\bfor\s+(all|select|insert|update|delete)\b/i.exec(rest) || [, 'all'])[1].toLowerCase();
-    const to = /\bto\s+(.+?)(?=\s+using\b|\s+with\s+check\b|$)/i.exec(rest);
+    const head = policyHead(m[3]);
+    const cmd = (/\bfor\s+(all|select|insert|update|delete)\b/i.exec(head) || [, 'all'])[1].toLowerCase();
+    const to = /\bto\s+(.+?)\s*$/i.exec(head);
     const roles = to ? parseRoles(to[1]) : ['public'];
     let t = st.tables.get(table);
     if (!t) {
       if (st.views.has(table)) return void st.stats.handled++;
-      t = { name: table, rls: false, policies: new Map(), text: '', external: true, ...loc };
+      t = newTable(st, table, loc, { external: true });
       st.tables.set(table, t);
     }
-    t.policies.set(pname, { name: pname, command: cmd, roles, restrictive: /\bas\s+restrictive\b/i.test(rest), text: s.text, ...loc });
+    t.policies.set(pname, { name: pname, command: cmd, roles, restrictive: /\bas\s+restrictive\b/i.test(head), text: s.text, ...loc });
     return void st.stats.handled++;
   }
   if ((m = new RegExp(String.raw`^alter\s+policy\s+(${IDENT})\s+on\s+` + QNAME + String.raw`\s*(.*)$`, 'i').exec(o))) {
@@ -395,7 +496,7 @@ export function applyStatement(st, s, file) {
     if (!p) st.unparsed.push({ ...loc, reason: `alter of unknown policy ${pname}`, text: short(o) });
     else if ((r = new RegExp(String.raw`^rename\s+to\s+(${IDENT})`, 'i').exec(m[3]))) { t.policies.delete(pname); p.name = r[1].replace(/^"|"$/g, ''); t.policies.set(p.name, p); }
     else {
-      const to = /\bto\s+(.+?)(?=\s+using\b|\s+with\s+check\b|$)/i.exec(m[3]);
+      const to = /\bto\s+(.+?)\s*$/i.exec(policyHead(m[3]));
       if (to) p.roles = parseRoles(to[1]);
       p.text += '\n' + s.text;
     }
@@ -407,15 +508,18 @@ export function applyStatement(st, s, file) {
     return void st.stats.handled++;
   }
   // GRANT / REVOKE EXECUTE
-  if ((m = /^(grant|revoke)\s+(grant\s+option\s+for\s+)?(.+?)\s+on\s+(all\s+functions\s+in\s+schema\s+(.+?)|all\s+(?:procedures|routines)\s+in\s+schema\s+(.+?)|(?:function|functions|procedure|routine)\s+(.+?))\s+(to|from)\s+(.+)$/i.exec(o))) {
+  if ((m = /^(grant|revoke)\s+(grant\s+option\s+for\s+)?(.+?)\s+on\s+(all\s+(functions|procedures|routines)\s+in\s+schema\s+(.+?)|(?:function|functions|procedure|procedures|routine|routines)\s+(.+?))\s+(to|from)\s+(.+)$/i.exec(o))) {
     const privs = m[3].toLowerCase();
     if (!/\b(execute|all)\b/.test(privs) || m[2]) return void st.stats.ignored++;
     const isGrant = m[1].toLowerCase() === 'grant';
-    const roles = parseRoles(m[9]).filter((r) => ROLES.includes(r));
+    const roles = parseRoles(m[9]);
     let targets;
-    if (m[5] || m[6]) {
-      const schemas = (m[5] || m[6]).split(',').map((x) => normName(x.trim()));
-      targets = [...st.functions.values()].filter((f) => schemas.includes(f.name.includes('.') ? f.name.split('.')[0] : 'public')).flatMap((f) => [...f.sigs.values()]);
+    if (m[5]) {
+      const schemas = splitTop(m[6]).map((x) => normName(x.trim()));
+      const kind = m[5].toLowerCase();
+      // ALL FUNCTIONS excludes procedures, ALL PROCEDURES excludes functions; ALL ROUTINES is both.
+      targets = [...st.functions.values()].filter((f) => schemas.includes(schemaOfName(f.name))).flatMap((f) => [...f.sigs.values()])
+        .filter((ov) => kind === 'routines' || (kind === 'functions' ? ov.kind === 'function' : ov.kind === 'procedure'));
     } else {
       targets = [];
       for (const ref of fnRefs(m[7])) {
@@ -424,27 +528,69 @@ export function applyStatement(st, s, file) {
         targets.push(...pickOverloads(f, ref.sig === null ? null : '(' + ref.sig + ')', st, loc, o, true));
       }
     }
-    for (const ov of targets) for (const r of roles) ov.grants[r] = isGrant;
+    for (const ov of targets) for (const r of roles) { if (isGrant) ov.grants[r] = true; else delete ov.grants[r]; }
     return void st.stats.handled++;
   }
-  // ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS
-  if ((m = /^alter\s+default\s+privileges\b(.*?)\b(grant|revoke)\s+(.+?)\s+on\s+(functions|routines)\s+(to|from)\s+(.+)$/i.exec(o))) {
-    if (/\bin\s+schema\b/i.test(m[1]) && !/\bin\s+schema\s+(public|"public")\b/i.test(m[1])) return void st.stats.ignored++;
+  // ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS | ROUTINES | TABLES
+  if ((m = /^alter\s+default\s+privileges\b(.*?)\b(grant|revoke)\s+(grant\s+option\s+for\s+)?(.+?)\s+on\s+(functions|routines|tables)\s+(to|from)\s+(.+)$/i.exec(o))) {
+    if (m[3]) return void st.stats.handled++;
     // Migrations run as postgres; default privileges for another role do not apply to what they create.
-    const forRole = /\bfor\s+(?:role|user)\s+("?[\w]+"?)/i.exec(m[1]);
-    if (forRole && forRole[1].replace(/"/g, '').toLowerCase() !== 'postgres') return void st.stats.ignored++;
-    if (/\b(execute|all)\b/i.test(m[3])) for (const r of parseRoles(m[6]).filter((x) => ROLES.includes(x))) st.defaults[r] = m[2].toLowerCase() === 'grant';
+    const forRole = /\bfor\s+(?:role|user)\s+(.+?)(?=\s+in\s+schema\b|$)/i.exec(m[1].trim());
+    if (forRole && !parseRoles(forRole[1]).includes('postgres')) return void st.stats.handled++;
+    const inSchema = /\bin\s+schema\s+(.+)$/i.exec(m[1].trim());
+    const layers = inSchema ? splitTop(inSchema[1]).map((x) => layerFor(st, normName(x.trim()))) : [layerFor(st, null)];
+    const grant = m[2].toLowerCase() === 'grant';
+    const roles = parseRoles(m[7]);
+    if (/^(functions|routines)$/i.test(m[5])) {
+      if (/\b(execute|all)\b/i.test(m[4])) for (const l of layers) for (const r of roles) { if (grant) l.functions[r] = true; else delete l.functions[r]; }
+    } else {
+      const privs = tablePrivList(m[4]);
+      for (const l of layers) for (const r of roles) {
+        const cur = l.tables[r] || new Set();
+        for (const p of privs) grant ? cur.add(p) : cur.delete(p);
+        l.tables[r] = cur;
+      }
+    }
+    return void st.stats.handled++;
+  }
+  // GRANT / REVOKE on tables and views
+  if ((m = /^(grant|revoke)\s+(grant\s+option\s+for\s+)?(.+?)\s+on\s+(?:(all\s+tables\s+in\s+schema\s+(.+?))|(?:table\s+)?(?!(?:function|functions|procedure|procedures|routine|routines|schema|sequence|sequences|database|type|domain|language|large\s+object|foreign|tablespace|all)\b)(.+?))\s+(to|from)\s+(.+)$/i.exec(o))) {
+    if (m[2]) return void st.stats.handled++;
+    const privs = tablePrivList(m[3]);
+    const roles = parseRoles(m[8]);
+    const grant = m[1].toLowerCase() === 'grant';
+    let objs;
+    if (m[4]) {
+      const schemas = splitTop(m[5]).map((x) => normName(x.trim()));
+      objs = [...st.tables.values(), ...st.views.values()].filter((t) => schemas.includes(schemaOfName(t.name)));
+    } else objs = fnList(m[6]).map((n) => st.tables.get(n) || st.views.get(n)).filter(Boolean);
+    for (const t of objs) for (const r of roles) {
+      const cur = t.grants[r] || new Set();
+      for (const p of privs) grant ? cur.add(p) : cur.delete(p);
+      t.grants[r] = cur;
+    }
+    return void st.stats.handled++;
+  }
+  // GRANT role TO role (membership: EXECUTE and table privileges are inherited)
+  if ((m = /^(grant|revoke)\s+(admin\s+option\s+for\s+|inherit\s+option\s+for\s+|set\s+option\s+for\s+)?((?:"[^"]+"|[\w$]+)(?:\s*,\s*(?:"[^"]+"|[\w$]+))*)\s+(to|from)\s+(.+)$/i.exec(o)) && !/\bon\b/i.test(m[3])) {
+    if (m[2]) return void st.stats.handled++;
+    const groups = parseRoles(m[3]);
+    for (const r of parseRoles(m[5])) {
+      const cur = st.members.get(r) || new Set();
+      for (const g of groups) m[1].toLowerCase() === 'grant' ? cur.add(g) : cur.delete(g);
+      st.members.set(r, cur);
+    }
     return void st.stats.handled++;
   }
   // TRIGGERS
   if ((m = new RegExp(String.raw`^create\s+(?:or\s+replace\s+)?(?:constraint\s+)?trigger\s+(${IDENT})\s.*?\bon\s+` + QNAME + String.raw`\s.*?\bexecute\s+(?:function|procedure)\s+` + QNAME, 'i').exec(o))) {
     const tname = m[1].replace(/^"|"$/g, '');
     const table = normName(m[2]);
-    st.triggers.set(`${table}.${tname}`, { name: tname, table, fn: normName(m[3]), ...loc });
+    st.triggers.set(`${table}.${tname}`, { name: tname, table, fn: normName(m[3]), text: s.text, ...loc });
     return void st.stats.handled++;
   }
   if ((m = new RegExp(String.raw`^create\s+event\s+trigger\s+(${IDENT})\s.*?\bexecute\s+(?:function|procedure)\s+` + QNAME, 'i').exec(o))) {
-    st.triggers.set(`(event).${m[1]}`, { name: m[1], table: '(event)', fn: normName(m[2]), ...loc });
+    st.triggers.set(`(event).${m[1]}`, { name: m[1], table: '(event)', fn: normName(m[2]), text: '', ...loc });
     return void st.stats.handled++;
   }
   if ((m = new RegExp(String.raw`^drop\s+trigger\s+(?:if\s+exists\s+)?(${IDENT})\s+on\s+` + QNAME, 'i').exec(o))) {
@@ -453,31 +599,122 @@ export function applyStatement(st, s, file) {
   }
   if (/^drop\s+event\s+trigger/i.test(o)) return void st.stats.handled++;
 
-  if (/^(grant|revoke)\s/i.test(o) && !/\b(function|functions|routine|routines|procedure|procedures)\b/i.test(o)) return void st.stats.ignored++;
   if (IGNORE_RE.test(o)) return void st.stats.ignored++;
   if (/^(create|alter|drop|grant|revoke)\b/i.test(o) || /\b(function|policy|row level security|table|view|trigger|execute)\b/i.test(o)) {
     st.unparsed.push({ ...loc, reason: 'unrecognised statement', text: short(o) });
   } else st.stats.ignored++;
 }
 
+/** The part of a CREATE/ALTER POLICY tail before USING / WITH CHECK, with string literals blanked. */
+function policyHead(rest) {
+  const masked = rest.replace(/'(?:[^']|'')*'/g, "''");
+  const cut = masked.search(/\busing\s*\(|\bwith\s+check\s*\(/i);
+  return cut < 0 ? masked : masked.slice(0, cut);
+}
+
+/** Table privileges named in a GRANT/REVOKE privilege list (column lists ignored). */
+function tablePrivList(s) {
+  const t = s.replace(/\([^)]*\)/g, '').toLowerCase();
+  if (/\ball\b/.test(t)) return TABLE_PRIVS;
+  return TABLE_PRIVS.filter((p) => new RegExp(`\\b${p}\\b`).test(t));
+}
+
 const short = (s) => s.replace(/\s+/g, ' ').slice(0, 120);
-/** Statements whose loss changes who can call what: grants, revokes, dropped policies. */
-export const RISKY_RE = /\b(grant|revoke)\b|\bdrop\s+policy\b|\balter\s+default\s+privileges\b/i;
+/** Statements whose loss changes who can reach what: grants, revokes, role membership, policies, RLS. */
+export const RISKY_RE = /\b(grant|revoke)\b|\bdrop\s+policy\b|\b(create|alter)\s+policy\b|\balter\s+default\s+privileges\b|\brow\s+level\s+security\b/i;
+
+/** Postgres format(): %s, %I, %L, %%, positional %n$. Throws on a missing argument. */
+export function sqlFormat(tmpl, args) {
+  let k = 0;
+  return tmpl.replace(/%(?:(\d+)\$)?([sIL%])/g, (all, pos, t) => {
+    if (t === '%') return '%';
+    const v = args[pos ? Number(pos) - 1 : k++];
+    if (v == null) throw new Error('format() argument missing');
+    if (t === 'I') return /^[a-z_][a-z0-9_$]*$/.test(v) ? v : '"' + v.replace(/"/g, '""') + '"';
+    if (t === 'L') return "'" + v.replace(/'/g, "''") + "'";
+    return v;
+  });
+}
+
+/** Same text with the contents of '...' literals blanked (same length), so keyword searches skip strings. */
+const maskStrings = (t) => t.replace(/'(?:[^']|'')*'/g, (x) => "'" + ' '.repeat(x.length - 2) + "'");
+
+const DDL_RE = /\b(create\s+(or\s+replace\s+)?(policy|function|procedure|table|view|trigger|index)\b|alter\s+default\s+privileges\b|alter\s+(table|function|procedure|routine|policy|view)\b|drop\s+(policy|function|procedure|table|view|trigger)\b|grant\s|revoke\s)/i;
 
 /**
- * Heuristic for a common pattern: a DO block that loops over a literal list of function names and runs
- * `execute format('revoke execute on function %s from ...', fn)`. Applies the grant/revoke to every
- * known function named in a string literal in the block, and reports that it did.
+ * A DO block. EXECUTE with literal text, format() with literal arguments, and format() inside a
+ * FOREACH/FOR loop over an array literal are expanded and applied. Anything else that builds DDL
+ * dynamically is reported (risky when it touches grants, policies or RLS).
  */
-function dynamicGrantLoop(st, body, loc) {
-  const g = /execute\s+format\s*\(\s*'(grant|revoke)\s+(?:execute|all)\s+on\s+(?:function|routine)\s+%[sI]\s+(to|from)\s+([\w\s,"]+?)'/i.exec(body);
-  if (!g) return false;
-  const roles = parseRoles(g[3]).filter((r) => ROLES.includes(r));
-  const names = [...new Set([...body.matchAll(/'([A-Za-z_]\w*)'/g)].map((x) => x[1].toLowerCase()))].filter((n) => st.functions.has(n));
-  const isGrant = g[1].toLowerCase() === 'grant';
-  for (const n of names) for (const ov of st.functions.get(n).sigs.values()) for (const r of roles) ov.grants[r] = isGrant;
-  st.unparsed.push({ ...loc, reason: `dynamic ${g[1].toLowerCase()} loop: applied heuristically to ${names.length} named function(s)`, text: short(names.join(', ')), risky: true });
-  return true;
+function doBlock(st, body, loc, file) {
+  const dynamic = /\bexecute\b/i.test(body);
+  if (dynamic) st.dynamic.push({ text: body, ...loc });
+  const apply = (sql, how) => {
+    for (const inner of splitStatements(sql)) {
+      st.dynamicApplied.push({ ...loc, text: short(inner.text), how });
+      applyStatement(st, { ...inner, line: loc.line }, file);
+    }
+  };
+  const report = (text, why) => {
+    const risky = RISKY_RE.test(text);
+    st.unparsed.push({ ...loc, reason: why, text: short(text), risky });
+    if (/row\s+level\s+security/i.test(text)) {
+      const t = new RegExp(String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?` + QNAME + String.raw`\s`, 'i').exec(text);
+      const name = t && !t[1].includes('%') ? normName(t[1]) : null;
+      if (name && st.tables.get(name)) st.tables.get(name).rlsUncertain = `${loc.file}:${loc.line}`;
+      else if (!name) st.rlsUncertain = `${loc.file}:${loc.line}`;
+    }
+  };
+  /** Expand one EXECUTE at `idx` (pointing at the word) with variable bindings; returns false if not literal. */
+  const expand = (src, idx, bind) => {
+    const after = src.slice(idx + 7);
+    const fm = /^\s*format\s*\(/i.exec(after);
+    if (fm) {
+      const args = parseCallArgs(src, idx + 7 + fm[0].length - 1);
+      if (!args || !args.length || args[0].lit == null) return null;
+      const vals = args.slice(1).map((a) => {
+        if (a.lit != null) return a.lit;
+        const v = /^(?:quote_ident\s*\(\s*)?([A-Za-z_]\w*)\s*\)?$/i.exec(a.raw);
+        return v && bind && bind.has(v[1].toLowerCase()) ? bind.get(v[1].toLowerCase()) : undefined;
+      });
+      if (vals.some((v) => v === undefined)) return null;
+      try { return sqlFormat(args[0].lit, vals); } catch { return null; }
+    }
+    const lit = /^\s*('(?:[^']|'')*'|\$([A-Za-z_]\w*)?\$[\s\S]*?\$\2\$)\s*(;|$)/.exec(after);
+    if (lit) return lit[1].startsWith("'") ? lit[1].slice(1, -1).replace(/''/g, "'") : lit[1].replace(/^\$[^$]*\$|\$[^$]*\$$/g, '');
+    return null;
+  };
+  let rest = body;
+  if (dynamic) {
+    const loopRe = /\b(?:foreach\s+([A-Za-z_]\w*)\s+in\s+array\s+(?:array\s*)?\[([^\]]*)\](?:\s*::\s*[\w\s]+\[\])?|for\s+([A-Za-z_]\w*)\s+in\s+(?:select\s+)?unnest\s*\(\s*(?:array\s*)?\[([^\]]*)\]\s*(?:::\s*[\w\s]+\[\])?\s*\))\s+loop\b([\s\S]*?)\bend\s+loop\b/gi;
+    rest = body.replace(loopRe, (all, v1, list1, v2, list2, loopBody) => {
+      const v = (v1 || v2).toLowerCase();
+      const items = splitTop(list1 || list2).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim()));
+      const literal = items.length && items.every(Boolean);
+      for (const ex of maskStrings(loopBody).matchAll(/\bexecute\b/gi)) {
+        if (!literal) { report(loopBody, 'dynamic SQL (EXECUTE) in a loop over a non-literal list'); break; }
+        const outs = items.map((it) => expand(loopBody, ex.index, new Map([[v, it[1].replace(/''/g, "'")]])));
+        if (outs.some((x) => x == null)) report(loopBody.slice(ex.index, ex.index + 200), 'dynamic SQL (EXECUTE) with non-literal arguments');
+        else for (const sql of outs) apply(sql, `EXECUTE in a loop over ${items.length} literal value(s)`);
+      }
+      return all.replace(/[^\n]/g, ' ');
+    });
+  }
+  for (const inner of splitStatements(rest)) {
+    const t = inner.outer.replace(/\s+/g, ' ');
+    const ex = /\bexecute\b/i.exec(maskStrings(inner.text));
+    if (ex && !/^\s*(create|alter)\s/i.test(t)) {
+      const sql = expand(inner.text, ex.index, null);
+      if (sql != null) { apply(sql, 'EXECUTE with literal arguments'); continue; }
+      if (/\b(create|grant|revoke|alter|drop|policy|security)\b/i.test(inner.text)) report(inner.text, 'dynamic SQL (EXECUTE) in DO block');
+      continue;
+    }
+    const k = DDL_RE.exec(t);
+    if (k) {
+      const off = inner.outer.search(new RegExp(k[0].replace(/\s+/g, '\\s+'), 'i'));
+      applyStatement(st, { ...inner, text: inner.text, outer: inner.outer.slice(off), line: loc.line + inner.line - 1 }, file);
+    } else if (/\bcron\s*\.\s*(schedule|unschedule)/i.test(inner.text)) handleCron(st, inner.text, loc);
+  }
 }
 
 function handleCron(st, text, loc) {
@@ -506,6 +743,7 @@ function handleCron(st, text, loc) {
   }
 }
 
+
 const SUBJECT_RE = new RegExp(String.raw`^(?:create\s+(?:or\s+replace\s+)?(?:function|procedure|(?:materialized\s+)?view|table(?:\s+if\s+not\s+exists)?)|alter\s+(?:function|procedure|table|view))\s+` + QNAME, 'i');
 
 /** `-- supareach: ignore <rule> <reason>` applies to the object the next statement creates or alters. */
@@ -520,18 +758,32 @@ export function sqlHatches(st, hatches, stmts, file) {
   }
 }
 
-/** Parse all migrations in a directory in filename order. */
+
+/** Parse migrations in a directory in version order, as the Supabase CLI does (only `<version>_<name>.sql`). */
 export function scanMigrations(dir, opts = {}) {
   const st = createState(opts);
   if (!fs.existsSync(dir)) return st;
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  const relDir = (opts.relDir || path.basename(dir)).replace(/\/+$/, '');
+  const all = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.sql'));
+  const files = [];
+  for (const f of all) {
+    if (MIGRATION_FILE.test(f)) files.push(f);
+    else st.skipped.push({ file: `${relDir}/${f}`, reason: 'not applied by the Supabase CLI (name must be <timestamp>_name.sql)' });
+  }
+  const ver = (f) => BigInt(MIGRATION_FILE.exec(f)[1]);
+  files.sort((a, b) => { const x = ver(a), y = ver(b); return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0; });
   for (const f of files) {
-    const rel = (opts.relDir || path.basename(dir)).replace(/\/+$/, '') + '/' + f;
-    if (opts.root && !isInside(opts.root, path.join(dir, f))) { st.skipped.push({ file: rel, reason: 'symbolic link to a file outside the project' }); continue; }
+    const rel = `${relDir}/${f}`;
+    const full = path.join(dir, f);
+    if (opts.root && !isInside(opts.root, full)) { st.skipped.push({ file: rel, reason: 'symbolic link to a file outside the project' }); continue; }
+    let size = 0;
+    try { size = fs.statSync(full).size; } catch { /* unreadable: reported below */ }
+    if (size > MAX_MIGRATION_FILE) { st.skipped.push({ file: rel, reason: `larger than ${MAX_MIGRATION_FILE / 1024 / 1024} MB; not replayed`, risky: true }); continue; }
     st.stats.files++;
-    const sql = fs.readFileSync(path.join(dir, f), 'utf8');
+    const sql = fs.readFileSync(full, 'utf8');
     const stmts = splitStatements(sql);
     for (const s of stmts) {
+      if (s.text.length > MAX_STATEMENT) { st.unparsed.push({ file: rel, line: s.line, reason: `statement larger than ${MAX_STATEMENT / 1024} KB; skipped`, text: short(s.text.slice(0, 200)), risky: RISKY_RE.test(s.text.slice(0, 4096)) }); continue; }
       const before = st.unparsed.length;
       try { applyStatement(st, s, rel); } catch (e) { st.unparsed.push({ file: rel, line: s.line, reason: 'parser error: ' + e.message, text: short(s.outer) }); }
       for (let i = before; i < st.unparsed.length; i++) if (st.unparsed[i].risky === undefined) st.unparsed[i].risky = RISKY_RE.test(s.text);
@@ -541,16 +793,71 @@ export function scanMigrations(dir, opts = {}) {
   return st;
 }
 
-/** Function names and edge-function URLs referenced in a chunk of SQL text. */
-export function sqlRefs(text, fnNames) {
+const STATEMENT_START = /^\s*(select|perform|insert|update|delete|with|call|create|alter|drop|grant|revoke|do)\b/i;
+const isIdStart = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_';
+const isId = (c) => isIdStart(c) || (c >= '0' && c <= '9') || c === '$';
+
+/** Read an identifier at i: [name (case-normalised), end, quoted]. */
+function readIdent(t, i) {
+  if (t[i] === '"') {
+    let j = i + 1, out = '';
+    while (j < t.length) { if (t[j] === '"') { if (t[j + 1] === '"') { out += '"'; j += 2; continue; } break; } out += t[j++]; }
+    return [out, j + 1, true];
+  }
+  let j = i + 1;
+  while (j < t.length && isId(t[j])) j++;
+  return [t.slice(i, j).toLowerCase(), j, false];
+}
+const skipWs = (t, i) => { while (i < t.length && (t[i] === ' ' || t[i] === '\n' || t[i] === '\t' || t[i] === '\r')) i++; return i; };
+
+/**
+ * Calls `cb(schema|null, name)` for every `name(` / `schema.name(` in t, in linear time. A name right
+ * after FUNCTION/PROCEDURE/ROUTINE is DDL about the function (ALTER/DROP/GRANT/COMMENT ON FUNCTION f()),
+ * not a call, unless the keyword follows EXECUTE (a trigger's EXECUTE FUNCTION f()).
+ */
+function scanCalls(t, cb) {
+  let i = 0, p1 = '', p2 = '';
+  const n = t.length;
+  while (i < n) {
+    const c = t[i];
+    if (c === "'") { const e = t.indexOf("'", i + 1); i = e < 0 ? n : e + 1; p2 = p1; p1 = "'"; continue; }
+    if (isIdStart(c) || c === '"') {
+      let [a, j, qa] = readIdent(t, i);
+      let schema = null, name = a, k = skipWs(t, j);
+      if (t[k] === '.') {
+        const k2 = skipWs(t, k + 1);
+        if (isIdStart(t[k2] || '') || t[k2] === '"') { const [b, j2] = readIdent(t, k2); schema = a; name = b; j = j2; k = skipWs(t, j2); }
+      }
+      if (t[k] === '(' && !(/^(function|procedure|routine|functions)$/.test(p1) && p2 !== 'execute')) cb(schema, name, qa);
+      p2 = p1; p1 = schema ? '' : (qa ? '' : a);
+      i = j; continue;
+    }
+    if (c !== ' ' && c !== '\n' && c !== '\t' && c !== '\r') { p2 = p1; p1 = c; }
+    i++;
+  }
+}
+
+/**
+ * Function names (normalised, as in `fnNames`) and edge-function URLs referenced in a chunk of SQL.
+ * `schema.f()` resolves only to that schema; an unqualified `f()` resolves to public (and to
+ * `ownSchema` for code inside a function of another schema). Quoted names keep their case.
+ * Names inside string literals count only when the string is itself a statement run by EXECUTE.
+ */
+export function sqlRefs(text, fnNames, ownSchema = 'public') {
   const fns = new Set();
   const edges = new Set();
   text = text.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const u of text.matchAll(FN_URL)) edges.add(u[1]);
-  // Names inside string literals (error messages, hints) are not calls, unless the SQL builds dynamic statements.
-  if (!/\bexecute\b/i.test(text)) text = text.replace(/'(?:[^']|'')*'/g, "''");
-  const re = /(?:\b[A-Za-z_]\w*\s*\.\s*)?"?([A-Za-z_]\w*)"?\s*\(/g;
-  let m;
-  while ((m = re.exec(text))) { const n = m[1].toLowerCase(); if (fnNames.has(n)) fns.add(n); }
+  const hit = (schema, name) => {
+    const keys = schema ? [qualify(schema, name)] : [name, ...(ownSchema && ownSchema !== 'public' ? [`${ownSchema}.${name}`] : [])];
+    for (const k of keys) if (fnNames.has(k)) fns.add(k);
+  };
+  scanCalls(text, hit);
+  if (/\bexecute\b/i.test(text)) {
+    for (const s of text.matchAll(/'((?:[^']|'')*)'/g)) {
+      const inner = s[1].replace(/''/g, "'");
+      if (STATEMENT_START.test(inner)) scanCalls(inner, hit);
+    }
+  }
   return { fns, edges };
 }

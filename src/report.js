@@ -13,6 +13,11 @@ export function renderReport(r) {
   L.push(`# supareach report: ${esc(r.root)}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
   if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${esc(w)}`, ''); }
   L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
+  if (r.project) {
+    const g = r.project.grantModel || {};
+    L.push(`Supabase project: ${code(r.project.supabaseDir)} (${esc(r.project.how)}). Default-grant model: **${esc(g.model)}** (${esc(g.source)}).`
+      + (g.live ? ` Live database: tables ${esc(g.live.tables)}; functions ${esc(g.live.functions)}.` : ''), '');
+  }
   L.push('## Summary', '', '| Finding | Count |', '|---|---|');
   for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`, ${rule.level}) | ${r.counts[rule.id]} |`);
   L.push(`| Storage buckets referenced (info) | ${r.info.storage_buckets.length} |`);
@@ -68,6 +73,24 @@ export function renderReport(r) {
     for (const u of r.info.unparsed_sql) L.push(`| ${tcode(`${u.file}:${u.line}`)} | ${u.risky ? '**touches grants/policies** ' : ''}${esc(u.reason)} | ${tcode(u.text)} |`);
   }
   L.push('');
+  const applied = r.info.dynamic_sql_applied || [];
+  if (applied.length) {
+    L.push(`## Dynamic SQL applied (${applied.length})`, '', 'EXECUTE statements in DO blocks whose text was fully known (literals, or a loop over an array literal) and that were applied like ordinary statements.', '');
+    L.push('| Where | How | Statement |', '|---|---|---|');
+    for (const d of applied) L.push(`| ${tcode(`${d.file}:${d.line}`)} | ${esc(d.how)} | ${tcode(d.text)} |`);
+    L.push('');
+  }
+  const skipped = r.info.skipped_migrations || [];
+  if (skipped.length) {
+    L.push(`## Files in the migrations directory not replayed (${skipped.length})`, '');
+    for (const f of skipped) L.push(`- ${code(f.file)}: ${esc(f.reason)}`);
+    L.push('');
+  }
+  if ((r.info.parse_errors || []).length) {
+    L.push(`## Files with syntax errors (${r.info.parse_errors.length})`, '', 'Parsed with error recovery; calls after the error may be missing.', '');
+    for (const f of r.info.parse_errors) L.push(`- ${code(`${f.file}:${f.line}`)}: ${esc(f.error)}`);
+    L.push('');
+  }
   if (r.info.invalid_hatches.length) {
     L.push(`## Hatches that were not applied (${r.info.invalid_hatches.length})`, '');
     for (const h of r.info.invalid_hatches) L.push(`- ${code(`${h.file}:${h.line}`)}: ${esc(h.error)}`);

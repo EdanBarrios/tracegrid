@@ -5,9 +5,11 @@
 // grants are per signature, and two overloads with the same arity are merged (grants OR'd), with
 // every signature kept in `signatures`. The same key is used in both modes so a baseline written
 // from migrations still matches a catalog run.
+import { canExec, tablePrivs } from './scan-sql.js';
 
 /** Schema part of a normalised name (`x.t` -> `x`, `t` -> `public`). */
 export const schemaOf = (name) => (name.includes('.') ? name.split('.')[0] : 'public');
+
 const loc = (o) => (o.file ? `${o.file}:${o.line}` : undefined);
 
 /** Number of input arguments in a normalised signature string from sigOf(). */
@@ -38,25 +40,33 @@ export function groupFunctions(rows) {
 /** Catalog from the replayed migration state. */
 export function fromMigrations(st) {
   const rows = [];
+  const m = st.members;
   for (const f of st.functions.values()) {
     for (const ov of f.sigs.values()) {
       rows.push({ name: f.name, arity: arityOf(ov.sig), signature: `${f.name}(${ov.sig})`, args: ov.args, returns: ov.returns, kind: ov.kind,
-        securityDefiner: ov.securityDefiner, anon: !!(ov.grants.anon || ov.grants.public), authenticated: !!(ov.grants.authenticated || ov.grants.public),
+        securityDefiner: ov.securityDefiner, anon: canExec(ov.grants, 'anon', m), authenticated: canExec(ov.grants, 'authenticated', m),
         body: ov.body, at: loc(ov) });
     }
   }
+  const grantsOf = (g) => ({ anon: tablePrivs(g, 'anon', m), authenticated: tablePrivs(g, 'authenticated', m) });
   return {
     source: 'migrations',
+    model: st.model,
     tables: [...st.tables.values()].map((t) => ({
-      name: t.name, schema: schemaOf(t.name), rls: t.rls, external: !!t.external, text: t.text, at: loc(t),
-      policies: [...t.policies.values()].map((p) => ({ name: p.name, command: p.command, roles: p.roles, text: p.text, at: loc(p) })),
+      name: t.name, schema: schemaOf(t.name), rls: t.rls, external: !!t.external, text: t.text, indexText: t.indexText || '', at: loc(t),
+      partition: !!t.partition, rlsUncertain: t.rlsUncertain || st.rlsUncertain || undefined,
+      // External tables (created outside migrations) have unknown grants.
+      grants: t.external ? null : grantsOf(t.grants),
+      policies: [...t.policies.values()].map((p) => ({ name: p.name, command: p.command, roles: p.roles, permissive: !p.restrictive, text: p.text, at: loc(p) })),
     })),
-    views: [...st.views.values()].map((v) => ({ name: v.name, schema: schemaOf(v.name), securityInvoker: v.securityInvoker, materialized: v.materialized, text: v.text, at: loc(v) })),
+    views: [...st.views.values()].map((v) => ({ name: v.name, schema: schemaOf(v.name), securityInvoker: v.securityInvoker, materialized: v.materialized, text: v.text, grants: grantsOf(v.grants), at: loc(v) })),
     functions: groupFunctions(rows),
-    triggers: [...st.triggers.values()].map((t) => ({ name: t.name, table: t.table, fn: t.fn, at: loc(t) })),
+    members: Object.fromEntries([...m].map(([k, v]) => [k, [...v]])),
+    triggers: [...st.triggers.values()].map((t) => ({ name: t.name, table: t.table, fn: t.fn, text: t.text || '', at: loc(t) })),
     cron: [...st.cron.values()].map((c) => ({ name: c.name, schedule: c.schedule, command: c.command, at: loc(c) })),
     buckets: null,
     dynamic: st.dynamic.map((d) => ({ text: d.text, at: loc(d) })),
+    dynamicApplied: st.dynamicApplied,
     unparsed: st.unparsed,
     stats: { migrations: st.stats.files, statements: st.stats.statements },
   };

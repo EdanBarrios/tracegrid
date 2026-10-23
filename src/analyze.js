@@ -2,7 +2,7 @@
 import path from 'node:path';
 import { loadConfig, findFiles } from './config.js';
 import { scanFiles } from './scan-code.js';
-import { scanMigrations, sqlRefs } from './scan-sql.js';
+import { scanMigrations, sqlRefs, roleClosure, grantModel } from './scan-sql.js';
 import { fromMigrations, schemaOf } from './catalog.js';
 import { readCatalog, fromDb } from './db.js';
 import { listEdgeFunctions } from './edge-functions.js';
@@ -55,7 +55,11 @@ export async function analyze(root, opts = {}) {
   const project = resolveProject(root, cfg);
   const files = findFiles(root, cfg.include, cfg.exclude, { outputDirs: cfg.outputDirs || [] });
   const code = scanFiles(root, files, cfg.wrappers);
-  const sql = scanMigrations(path.join(root, project.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants, relDir: project.migrations, root });
+  // Grant model: config, else config.toml [api] auto_expose_new_tables, else legacy (the conservative choice).
+  const tomlExpose = project.toml && project.toml.api && typeof project.toml.api.auto_expose_new_tables === 'boolean' ? project.toml.api.auto_expose_new_tables : null;
+  const model = grantModel(cfg.supabaseDefaultGrants != null ? cfg.supabaseDefaultGrants : tomlExpose === false ? 'opt-in' : 'legacy');
+  const modelSource = cfg.supabaseDefaultGrants != null ? 'config' : tomlExpose != null ? `${project.configToml} [api] auto_expose_new_tables` : 'default';
+  const sql = scanMigrations(path.join(root, project.migrations), { supabaseDefaultGrants: model, relDir: project.migrations, root });
   const replayed = fromMigrations(sql);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
   const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec, root } : { root }), replayed) : replayed;
@@ -92,8 +96,25 @@ export async function analyze(root, opts = {}) {
   };
 
   // Schema nodes
-  for (const t of catalog.tables) node(`table:${t.name}`, 'table', t.name, { schema: t.schema, rls: t.rls, policies: t.policies.length, defined: !t.external, at: t.at });
-  for (const v of catalog.views) node(`table:${v.name}`, 'view', v.name, { schema: v.schema, securityInvoker: v.securityInvoker, at: v.at });
+  const members = new Map(Object.entries(catalog.members || {}).map(([k, v]) => [k, new Set(v)]));
+  const clientRoles = new Set([...roleClosure(members, 'anon'), ...roleClosure(members, 'authenticated')]);
+  /** Privileges anon or authenticated hold (union), or undefined when unknown. */
+  const clientPrivs = (g) => (g ? [...new Set([...(g.anon || []), ...(g.authenticated || [])])].sort() : undefined);
+  for (const t of catalog.tables) {
+    const permissive = t.policies.filter((p) => p.permissive !== false && (p.roles || ['public']).some((r) => clientRoles.has(r))).length;
+    node(`table:${t.name}`, 'table', t.name, {
+      schema: t.schema, rls: t.rls, policies: t.policies.length, clientPolicies: permissive, defined: !t.external, at: t.at,
+      ...(t.grants !== undefined ? { clientPrivs: clientPrivs(t.grants) } : {}),
+      ...(t.partition ? { partition: true } : {}), ...(t.rlsUncertain ? { rlsUncertain: t.rlsUncertain } : {}),
+    });
+  }
+  const rlsTables = new Map(catalog.tables.filter((t) => t.rls).map((t) => [t.name, t]));
+  for (const v of catalog.views) {
+    // Tables the view reads that have RLS: an owner-rights view returns their rows without it.
+    const reads = [...rlsTables.keys()].filter((name) => new RegExp(String.raw`(^|[^\w$."])` + (name.includes('.') ? '' : String.raw`(?:public\s*\.\s*)?`) + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + String.raw`(?![\w$])`, 'i').test(v.text || ''));
+    node(`table:${v.name}`, 'view', v.name, { schema: v.schema, securityInvoker: v.securityInvoker, materialized: v.materialized || undefined, readsRls: reads.length ? reads : undefined, at: v.at,
+      ...(v.grants !== undefined ? { clientPrivs: clientPrivs(v.grants) } : {}) });
+  }
   const fnIdsByName = new Map();
   for (const f of catalog.functions) {
     node(`fn:${f.key}`, 'function', f.name, {
@@ -161,21 +182,27 @@ export async function analyze(root, opts = {}) {
 
   // SQL edges (all inferred: found by text search in SQL bodies)
   const fnNames = new Set(fnIdsByName.keys());
-  const refsFrom = (srcId, text, at, kind, self) => {
-    const r = sqlRefs(text, fnNames);
+  const refsFrom = (srcId, text, at, kind, self, ownSchema) => {
+    const r = sqlRefs(text || '', fnNames, ownSchema);
     for (const f of r.fns) for (const t of fnIdsByName.get(f)) if (t !== self) edge(srcId, t, kind, 'inferred', at);
     for (const e of r.edges) {
       if (!nodes.has(`edge:${e}`)) node(`edge:${e}`, 'edge_function', e, { missing: true });
       edge(srcId, `edge:${e}`, 'http', 'inferred', at);
     }
   };
-  for (const f of catalog.functions) refsFrom(`fn:${f.key}`, f.body, f.at, 'sql-call', `fn:${f.key}`);
+  for (const f of catalog.functions) refsFrom(`fn:${f.key}`, f.body, f.at, 'sql-call', `fn:${f.key}`, f.schema);
   for (const v of catalog.views) refsFrom(`table:${v.name}`, v.text, v.at, 'view-uses', null);
   for (const t of catalog.tables) {
     refsFrom(`table:${t.name}`, t.text, t.at, 'default-uses', null);
+    if (t.indexText) refsFrom(`table:${t.name}`, t.indexText, t.at, 'index-uses', null);
     for (const p of t.policies) refsFrom(`table:${t.name}`, p.text, p.at, 'policy-uses', null);
   }
   for (const tr of catalog.triggers) {
+    // Database webhooks: supabase_functions.http_request('https://.../functions/v1/<name>', ...)
+    if (tr.text && tr.table !== '(event)') for (const e of sqlRefs(tr.text, new Set()).edges) {
+      if (!nodes.has(`edge:${e}`)) node(`edge:${e}`, 'edge_function', e, { missing: true });
+      edge(`table:${tr.table}`, `edge:${e}`, 'webhook', 'extracted', tr.at);
+    }
     for (const t of fnIdsByName.get(tr.fn) || []) {
       const src = tr.table === '(event)' ? t : `table:${tr.table}`;
       if (src !== t) edge(src, t, 'trigger', 'extracted', tr.at);
@@ -199,6 +226,7 @@ export async function analyze(root, opts = {}) {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),
     unresolved_dynamic_calls: code.unresolved,
     unparsed_sql: catalog.source === 'migrations' ? catalog.unparsed : [],
+    dynamic_sql_applied: catalog.source === 'migrations' ? sql.dynamicApplied : [],
     unreadable_files: code.failed,
     parse_errors: code.parseErrors,
     skipped_migrations: sql.skipped,
@@ -210,7 +238,7 @@ export async function analyze(root, opts = {}) {
   warnings.push(...(catalog.notes || []));
   const risky = catalog.unparsed.filter((u) => u.risky);
   if (catalog.source === 'migrations' && risky.length) {
-    warnings.push(`${risky.length} migration statement(s) the parser did not apply contain GRANT, REVOKE or DROP POLICY `
+    warnings.push(`${risky.length} migration statement(s) the parser did not apply change grants, role membership, policies or RLS `
       + `(first: ${risky[0].file}:${risky[0].line}). Findings that depend on grants and policies may be wrong; `
       + 'run with --db-url against a database built from these migrations to use the real catalog.');
   }
@@ -246,7 +274,7 @@ export async function analyze(root, opts = {}) {
     generated_at: new Date().toISOString(),
     root: path.basename(root),
     source: catalog.source,
-    project: { supabaseDir: project.supabaseDir, how: project.how, migrations: project.migrations, functionsDir: project.functionsDir, configToml: project.toml ? project.configToml : null, codeRoots: codeRoots(files) },
+    project: { grantModel: { model: model || 'vanilla', source: modelSource, ...(catalog.meta && catalog.meta.default_grants ? { live: catalog.meta.default_grants } : {}) }, supabaseDir: project.supabaseDir, how: project.how, migrations: project.migrations, functionsDir: project.functionsDir, configToml: project.toml ? project.configToml : null, codeRoots: codeRoots(files) },
     scope_problems,
     ...(catalog.meta ? { database: catalog.meta } : {}),
     warnings,

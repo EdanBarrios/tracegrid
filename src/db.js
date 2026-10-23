@@ -20,6 +20,9 @@ export const SYSTEM_SCHEMAS = ['pg_catalog', 'information_schema', 'pg_toast', '
 const sysList = SYSTEM_SCHEMAS.map((s) => `'${s}'`).join(', ');
 const appSchema = (col) => `${col} not in (${sysList}) and ${col} not like 'pg\\_%'`;
 const priv = (fn, role, obj, p) => `(select ${fn}(r.oid, ${obj}, '${p}') from pg_roles r where r.rolname = '${role}')`;
+/** A privilege that also needs USAGE on the schema: EXECUTE without USAGE is not callable. */
+const usable = (fn, role, obj, p, ns) => `coalesce(${priv(fn, role, obj, p)} and ${priv('has_schema_privilege', role, ns, 'USAGE')}, false)`;
+const tablePrivSql = (role) => `to_jsonb(array_remove(array[${['SELECT', 'INSERT', 'UPDATE', 'DELETE'].map((p) => `case when ${usable('has_table_privilege', role, 'c.oid', p, 'n.oid')} then '${p.toLowerCase()}' end`).join(', ')}]::text[], null))`;
 
 /** The whole read, as one psql script. Each select prints one line of JSON: { "section", "data" }. */
 export const CATALOG_SQL = String.raw`
@@ -30,7 +33,9 @@ select jsonb_build_object('section', 'meta', 'data', jsonb_build_object(
   'server_version_num', current_setting('server_version_num'),
   'transaction_read_only', current_setting('transaction_read_only'),
   'current_user', current_user,
-  'roles', (select coalesce(jsonb_agg(rolname order by rolname), '[]') from pg_roles where rolname in ('anon', 'authenticated'))));
+  'roles', (select coalesce(jsonb_agg(rolname order by rolname), '[]') from pg_roles where rolname in ('anon', 'authenticated')),
+  'default_acl', (select coalesce(jsonb_agg(jsonb_build_object('role', pg_get_userbyid(d.defaclrole), 'schema', coalesce(dn.nspname, ''), 'objtype', d.defaclobjtype, 'acl', d.defaclacl::text[]) order by dn.nspname, d.defaclobjtype), '[]')
+    from pg_default_acl d left join pg_namespace dn on dn.oid = d.defaclnamespace where pg_get_userbyid(d.defaclrole) = 'postgres')));
 select
   coalesce(has_table_privilege(to_regclass('cron.job')::oid, 'SELECT'), false) as supareach_has_cron,
   coalesce(has_table_privilege(to_regclass('storage.buckets')::oid, 'SELECT'), false) as supareach_has_buckets
@@ -39,9 +44,9 @@ select jsonb_build_object('section', 'functions', 'data', coalesce(jsonb_agg(jso
   'schema', n.nspname, 'name', p.proname, 'nargs', p.pronargs,
   'identity_args', pg_get_function_identity_arguments(p.oid), 'args', pg_get_function_arguments(p.oid),
   'returns', coalesce(pg_get_function_result(p.oid), 'void'), 'kind', p.prokind, 'security_definer', p.prosecdef,
-  'anon', ${priv('has_function_privilege', 'anon', 'p.oid', 'EXECUTE')},
-  'authenticated', ${priv('has_function_privilege', 'authenticated', 'p.oid', 'EXECUTE')},
-  'body', case when l.lanname in ('sql', 'plpgsql') then p.prosrc else '' end
+  'anon', ${usable('has_function_privilege', 'anon', 'p.oid', 'EXECUTE', 'n.oid')},
+  'authenticated', ${usable('has_function_privilege', 'authenticated', 'p.oid', 'EXECUTE', 'n.oid')},
+  'body', case when l.lanname in ('sql', 'plpgsql') then case when p.prosrc = '' and l.lanname = 'sql' then pg_get_functiondef(p.oid) else p.prosrc end else '' end
 ) order by n.nspname, p.proname, p.oid), '[]'))
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace join pg_language l on l.oid = p.prolang
 where ${appSchema('n.nspname')} and p.prokind in ('f', 'p')
@@ -51,8 +56,12 @@ select jsonb_build_object('section', 'relations', 'data', coalesce(jsonb_agg(jso
   'security_invoker', coalesce((select option_value from pg_options_to_table(c.reloptions) where option_name = 'security_invoker'), 'false'),
   'definition', case when c.relkind in ('v', 'm') then pg_get_viewdef(c.oid) else '' end,
   'defaults', (select coalesce(string_agg(pg_get_expr(d.adbin, d.adrelid), ' '), '') from pg_attrdef d where d.adrelid = c.oid),
-  'anon_select', ${priv('has_table_privilege', 'anon', 'c.oid', 'SELECT')},
-  'authenticated_select', ${priv('has_table_privilege', 'authenticated', 'c.oid', 'SELECT')}
+  'anon_select', ${usable('has_table_privilege', 'anon', 'c.oid', 'SELECT', 'n.oid')},
+  'authenticated_select', ${usable('has_table_privilege', 'authenticated', 'c.oid', 'SELECT', 'n.oid')},
+  'anon_privs', ${tablePrivSql('anon')},
+  'authenticated_privs', ${tablePrivSql('authenticated')},
+  'partition', c.relispartition,
+  'indexes', (select coalesce(string_agg(pg_get_indexdef(i.indexrelid), ' '), '') from pg_index i where i.indrelid = c.oid and i.indexprs is not null)
 ) order by n.nspname, c.relname), '[]'))
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where ${appSchema('n.nspname')} and c.relkind in ('r', 'p', 'v', 'm', 'f');
@@ -61,10 +70,10 @@ select jsonb_build_object('section', 'policies', 'data', coalesce(jsonb_agg(json
   'cmd', cmd, 'qual', qual, 'with_check', with_check) order by schemaname, tablename, policyname), '[]'))
 from pg_policies where schemaname not in ('pg_catalog', 'information_schema');
 select jsonb_build_object('section', 'triggers', 'data', coalesce(jsonb_agg(jsonb_build_object(
-  'name', t.tgname, 'schema', n.nspname, 'table', c.relname, 'fn_schema', pn.nspname, 'fn', p.proname) order by n.nspname, c.relname, t.tgname), '[]'))
+  'name', t.tgname, 'schema', n.nspname, 'table', c.relname, 'fn_schema', pn.nspname, 'fn', p.proname, 'def', pg_get_triggerdef(t.oid)) order by n.nspname, c.relname, t.tgname), '[]'))
 from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
 join pg_proc p on p.oid = t.tgfoid join pg_namespace pn on pn.oid = p.pronamespace
-where not t.tgisinternal and ${appSchema('pn.nspname')};
+where not t.tgisinternal and (${appSchema('pn.nspname')} or pn.nspname = 'supabase_functions');
 select jsonb_build_object('section', 'event_triggers', 'data', coalesce(jsonb_agg(jsonb_build_object(
   'name', e.evtname, 'fn_schema', pn.nspname, 'fn', p.proname) order by e.evtname), '[]'))
 from pg_event_trigger e join pg_proc p on p.oid = e.evtfoid join pg_namespace pn on pn.oid = p.pronamespace;
@@ -162,6 +171,19 @@ function execPsql(sql, env, { root } = {}) {
   return r.stdout;
 }
 
+/** Which Supabase default-grant model the live pg_default_acl shows for objects postgres creates in public. */
+export function describeDefaultAcl(rows) {
+  if (!Array.isArray(rows)) return null;
+  const pub = (t) => rows.find((r) => r.schema === 'public' && r.objtype === t);
+  const has = (row, role) => !!row && (row.acl || []).some((a) => a.startsWith(role + '='));
+  const tables = pub('r');
+  const fns = pub('f');
+  return {
+    tables: has(tables, 'anon') || has(tables, 'authenticated') ? 'legacy (new tables in public are granted to anon/authenticated)' : 'opt-in (new tables in public are not granted to anon/authenticated)',
+    functions: has(fns, 'anon') || has(fns, 'authenticated') ? 'legacy (new functions in public are granted to anon/authenticated)' : 'opt-in (no per-schema function grants in public; PUBLIC still gets EXECUTE unless revoked globally)',
+  };
+}
+
 const qn = (schema, name) => (schema === 'public' ? name : `${schema}.${name}`);
 
 /**
@@ -187,7 +209,7 @@ export function fromDb(sec, fallback) {
   for (const p of sec.policies) {
     const t = qn(p.schema, p.table);
     if (!policies.has(t)) policies.set(t, []);
-    policies.get(t).push({ name: p.name, command: String(p.cmd || 'ALL').toLowerCase(), roles: p.roles || [], text: [p.qual, p.with_check].filter(Boolean).join('\n'), at: relAt.get(t) || `db:${t}` });
+    policies.get(t).push({ name: p.name, command: String(p.cmd || 'ALL').toLowerCase(), roles: p.roles || [], permissive: String(p.permissive || 'PERMISSIVE').toUpperCase() !== 'RESTRICTIVE', text: [p.qual, p.with_check].filter(Boolean).join('\n'), at: relAt.get(t) || `db:${t}` });
   }
   const tables = [];
   const views = [];
@@ -197,12 +219,15 @@ export function fromDb(sec, fallback) {
   for (const r of sec.relations) {
     const name = qn(r.schema, r.name);
     const at = relAt.get(name) || `db:${name}`;
-    if (r.relkind === 'v' || r.relkind === 'm') views.push({ name, schema: r.schema, securityInvoker: /^(true|on|1|yes)$/i.test(String(r.security_invoker)), materialized: r.relkind === 'm', text: r.definition || '', at });
-    else tables.push({ name, schema: r.schema, rls: !!r.rls, external: false, text: r.defaults || '', at, policies: policies.get(name) || [],
-      grants: { anon: { select: !!r.anon_select }, authenticated: { select: !!r.authenticated_select } } });
+    const grants = {
+      anon: Array.isArray(r.anon_privs) ? r.anon_privs : (r.anon_select ? ['select'] : []),
+      authenticated: Array.isArray(r.authenticated_privs) ? r.authenticated_privs : (r.authenticated_select ? ['select'] : []),
+    };
+    if (r.relkind === 'v' || r.relkind === 'm') views.push({ name, schema: r.schema, securityInvoker: /^(true|on|1|yes)$/i.test(String(r.security_invoker)), materialized: r.relkind === 'm', text: r.definition || '', grants, at });
+    else tables.push({ name, schema: r.schema, rls: !!r.rls, external: false, text: r.defaults || '', indexText: r.indexes || '', partition: !!r.partition, at, policies: policies.get(name) || [], grants });
   }
   const triggers = [
-    ...sec.triggers.map((t) => ({ name: t.name, table: qn(t.schema, t.table), fn: qn(t.fn_schema, t.fn), at: relAt.get(qn(t.schema, t.table)) || 'db:trigger' })),
+    ...sec.triggers.map((t) => ({ name: t.name, table: qn(t.schema, t.table), fn: qn(t.fn_schema, t.fn), text: t.def || '', at: relAt.get(qn(t.schema, t.table)) || 'db:trigger' })),
     ...(sec.event_triggers || []).map((t) => ({ name: t.name, table: '(event)', fn: qn(t.fn_schema, t.fn), at: 'db:event trigger' })),
   ];
   let cron;
@@ -220,7 +245,7 @@ export function fromDb(sec, fallback) {
     dynamic: [],
     unparsed: [],
     notes,
-    meta: { server_version_num: sec.meta.server_version_num, current_user: sec.meta.current_user },
+    meta: { server_version_num: sec.meta.server_version_num, current_user: sec.meta.current_user, default_grants: describeDefaultAcl(sec.meta.default_acl) },
     stats: fallback ? fallback.stats : { migrations: 0, statements: 0 },
   };
 }

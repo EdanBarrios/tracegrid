@@ -87,12 +87,21 @@ test('sigOf normalises names, defaults, aliases and OUT args', () => {
   assert.equal(sigOf('ids int4[], v varchar(20)'), 'integer[],character varying');
 });
 
-test('function rename and alter default privileges', () => {
-  const st = run(`
+test('function rename and alter default privileges (global and per-schema layers)', () => {
+  // A per-schema revoke cannot remove the global PUBLIC default: the function stays callable.
+  let st = run(`
     alter default privileges in schema public revoke execute on functions from public, anon, authenticated;
     create function old() returns void language sql as $$ $$;
     alter function public.old() rename to new_name;`);
   assert.deepEqual([...st.functions.keys()], ['new_name']);
+  assert.equal(fn(st, 'new_name').anon, true);
+  assert.equal(fn(st, 'new_name').authenticated, true);
+  // Global revoke from PUBLIC plus per-schema revoke from anon/authenticated locks it.
+  st = run(`
+    alter default privileges revoke execute on functions from public;
+    alter default privileges in schema public revoke execute on functions from anon, authenticated;
+    create function old() returns void language sql as $$ $$;
+    alter function public.old() rename to new_name;`);
   assert.equal(fn(st, 'new_name').anon, false);
   assert.equal(fn(st, 'new_name').authenticated, false);
 });
@@ -130,7 +139,7 @@ test('triggers and DO blocks', () => {
   assert.equal(fn(st, 'trg').triggerOnly, true);
 });
 
-test('dynamic SQL is reported, and a revoke loop over named functions is applied', () => {
+test('dynamic SQL with literal arguments is applied (and listed); a loop over named functions too', () => {
   const st = run(`
     create function a() returns void language sql as $$ $$;
     create function b() returns void language sql as $$ $$;
@@ -141,8 +150,9 @@ test('dynamic SQL is reported, and a revoke loop over named functions is applied
     do $$ begin execute format('alter table %I enable row level security', 'x'); end $$;`);
   assert.equal(fn(st, 'a').authenticated, false);
   assert.equal(fn(st, 'b').anon, false);
-  assert.ok(st.unparsed.some((u) => /heuristically/.test(u.reason)));
-  assert.ok(st.unparsed.some((u) => /dynamic SQL/.test(u.reason)));
+  assert.deepEqual(st.dynamicApplied.map((d) => d.how), ['EXECUTE in a loop over 2 literal value(s)', 'EXECUTE in a loop over 2 literal value(s)', 'EXECUTE with literal arguments']);
+  assert.equal(st.tables.get('x').rls, true);
+  assert.deepEqual(st.unparsed, []);
 });
 
 test('unknown statements are reported, not silently dropped', () => {
@@ -187,7 +197,8 @@ test('unparsed statements touching grants or policies are flagged risky and rais
     end $$;
     do $$ begin execute 'create index i on t(id)'; end $$;`);
   const st = scanMigrations(path.join(tmp, 'supabase/migrations'));
-  assert.deepEqual(st.unparsed.map((u) => u.risky), [true, false]);
+  assert.deepEqual(st.unparsed.map((u) => u.risky), [true]);
+  assert.equal(st.dynamicApplied.length, 1, 'the literal EXECUTE is applied');
   const r = await analyze(tmp);
   const w = r.warnings.filter((x) => /migration statement/.test(x));
   assert.equal(w.length, 1);

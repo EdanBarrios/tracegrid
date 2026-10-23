@@ -6,7 +6,7 @@ import { isInside, realOr } from './safe.js';
 /** @typedef {{
  *   include: string[], exclude: string[], migrations: string, functionsDir: string,
  *   wrappers: { rpc: string[], from: string[], invoke: string[] },
- *   supabaseDefaultGrants: boolean,
+ *   supabaseDefaultGrants: 'legacy'|'opt-in'|boolean|null,
  *   ignore: { functions: string[], edgeFunctions: string[], tables: string[], rpcs: string[] }
  * }} Config */
 
@@ -30,9 +30,13 @@ export const DEFAULTS = {
   // Names of your own helper functions that take an RPC / table / edge function name
   // as their first argument, e.g. a local `rpc('name')` wrapper.
   wrappers: { rpc: [], from: [], invoke: [] },
-  // Supabase grants EXECUTE on new public functions to anon and authenticated by default
-  // (on top of Postgres' default EXECUTE to PUBLIC). Set false for a vanilla Postgres model.
-  supabaseDefaultGrants: true,
+  // Which default privileges new objects in `public` get (on top of Postgres' global EXECUTE to PUBLIC):
+  //   "legacy"  Supabase's per-schema grants to anon/authenticated/service_role on new tables and
+  //             functions in public (projects created before the 2026 change; true means this),
+  //   "opt-in"  no per-schema grants: new tables need an explicit GRANT (the 2026 default),
+  //   false     vanilla Postgres.
+  // null: read [api] auto_expose_new_tables from supabase/config.toml, else "legacy". --db-url reads the real ACLs.
+  supabaseDefaultGrants: null,
   // Schemas the Data API exposes (Supabase: Settings > API > Exposed schemas).
   exposedSchemas: ['public'],
   // Edge functions called from outside the codebase (webhooks, OAuth callbacks, auth hooks,
@@ -96,6 +100,7 @@ export function validateConfig(c, file = 'config') {
     });
   }
   if (!Array.isArray(c.plugins)) bad('plugins must be an array of paths');
+  if (![null, true, false, 'legacy', 'opt-in'].includes(c.supabaseDefaultGrants)) bad('supabaseDefaultGrants must be "legacy", "opt-in", true or false');
   if (!Array.isArray(c.entryPoints)) bad('entryPoints must be an array');
   c.entryPoints.forEach((x, i) => {
     if (typeof x === 'string') bad(`entryPoints[${i}] is a bare string; write { "name": ${JSON.stringify(x)}, "reason": "who calls it" }`);
