@@ -23,7 +23,9 @@
   },
   "scripts": {
     "test": "node test/run.mjs",
-    "demo": "node bin/tracegrid.js --demo"
+    "demo": "node bin/tracegrid.js --demo",
+    "site": "node site/build.mjs",
+    "stats": "node scripts/stats.mjs"
   },
   "keywords": [
     "supabase",

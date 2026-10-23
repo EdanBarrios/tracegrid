@@ -31,6 +31,8 @@ Use these alongside it; they answer different questions.
 npm install
 npm test                         # node:test; psql is faked, no database needed
 node bin/tracegrid.js --demo
+npm run site                     # tracegrid.dev into site/dist (landing page + /demo)
+npm run stats                    # adoption from public sources (npm, GitHub code search)
 ```
 
 Node 20+, ESM, plain JavaScript. The only dependency is `typescript` (for its parser). See
