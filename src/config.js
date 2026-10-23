@@ -22,14 +22,17 @@ export const DEFAULTS = {
   // (on top of Postgres' default EXECUTE to PUBLIC). Set false for a vanilla Postgres model.
   supabaseDefaultGrants: true,
   ignore: { functions: [], edgeFunctions: [], tables: [], rpcs: [] },
+  // Extra rule modules (paths relative to the config file). Each exports `rules`: see src/engine.js.
+  plugins: [],
 };
 
 /** @param {string} root @param {string} [file] @returns {Config} */
 export function loadConfig(root, file) {
   const p = file ? path.resolve(file) : path.join(root, 'supareach.config.json');
-  if (!fs.existsSync(p)) return structuredClone(DEFAULTS);
-  const user = JSON.parse(fs.readFileSync(p, 'utf8'));
   const c = structuredClone(DEFAULTS);
+  Object.defineProperty(c, '_dir', { value: file ? path.dirname(p) : root, enumerable: false });
+  if (!fs.existsSync(p)) return c;
+  const user = JSON.parse(fs.readFileSync(p, 'utf8'));
   for (const k of Object.keys(user)) {
     if (k === 'ignore' || k === 'wrappers') c[k] = { ...c[k], ...user[k] };
     else c[k] = user[k];

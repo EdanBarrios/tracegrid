@@ -4,16 +4,23 @@ import { loadConfig, findFiles } from './config.js';
 import { scanFiles } from './scan-code.js';
 import { scanMigrations, sqlRefs, fnSummary } from './scan-sql.js';
 import { listEdgeFunctions } from './edge-functions.js';
+import { coreRules } from './rules/core.js';
+import { loadPlugins, runRules, makeGraph } from './engine.js';
 
 export const SCHEMA_VERSION = 1;
 
-/** Finding kinds that gate `--check`. Informational lists are not gated. */
-export const GATED = ['exposed_uncalled_functions', 'client_tables_without_rls', 'client_tables_without_policies', 'missing_rpcs', 'unknown_tables', 'uncalled_edge_functions', 'missing_edge_functions'];
+/** Config ignore list that applies to each core rule. */
+const IGNORE_CATEGORY = {
+  'exposed-uncalled-function': 'functions',
+  'client-table-without-rls': 'tables', 'client-table-without-policies': 'tables', 'unknown-table': 'tables',
+  'missing-rpc': 'rpcs',
+  'uncalled-edge-function': 'edgeFunctions',
+};
 
-
-export function analyze(root, opts = {}) {
+export async function analyze(root, opts = {}) {
   root = path.resolve(root);
   const cfg = opts.config || loadConfig(root, opts.configFile);
+  const plugins = opts.rules || await loadPlugins(cfg._dir || root, cfg.plugins || []);
   const files = findFiles(root, cfg.include, cfg.exclude);
   const code = scanFiles(root, files, cfg.wrappers);
   const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants });
@@ -41,7 +48,8 @@ export function analyze(root, opts = {}) {
   const edge = (source, target, kind, confidence, at, op) => {
     const k = `${source}|${target}|${kind}`;
     let e = edges.get(k);
-    if (!e) { e = { source, target, kind, confidence, ops: [], at: [] }; edges.set(k, e); }
+    if (!e) { e = { source, target, kind, confidence, ops: [], at: [], count: 0 }; edges.set(k, e); }
+    e.count++;
     if (confidence === 'extracted') e.confidence = 'extracted';
     if (op && !e.ops.includes(op)) e.ops.push(op);
     if (at && e.at.length < 50) e.at.push(at);
@@ -53,7 +61,7 @@ export function analyze(root, opts = {}) {
   const fns = new Map([...sql.functions.values()].map((f) => [f.name, fnSummary(f)]));
   for (const f of fns.values()) {
     node(`fn:${f.name}`, 'function', f.name, {
-      securityDefiner: f.securityDefiner, returns: f.returns, args: f.args, anon: f.anon,
+      kind: f.kind, triggerOnly: f.triggerOnly || undefined, securityDefiner: f.securityDefiner, returns: f.returns, args: f.args, anon: f.anon,
       authenticated: f.authenticated, at: `${f.file}:${f.line}`, overloads: f.overloads > 1 ? f.overloads : undefined,
     });
   }
@@ -61,8 +69,6 @@ export function analyze(root, opts = {}) {
   for (const c of sql.cron.values()) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: `${c.file}:${c.line}` });
 
   // Code edges
-  const calledRpc = new Map(); // name -> [{side, at}]
-  const clientTables = new Map();
   const invoked = new Map();
   const buckets = new Map();
   const push = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
@@ -73,11 +79,9 @@ export function analyze(root, opts = {}) {
     if (c.kind === 'rpc') {
       node(`fn:${c.name}`, 'function', c.name, nodes.has(`fn:${c.name}`) ? {} : { missing: true });
       edge(caller.id, `fn:${c.name}`, 'rpc', c.confidence, at);
-      push(calledRpc, c.name, { side: caller.side, at });
     } else if (c.kind === 'table') {
       if (!nodes.has(`table:${c.name}`)) node(`table:${c.name}`, 'table', c.name, { missing: true });
       edge(caller.id, `table:${c.name}`, 'from', c.confidence, at, c.op);
-      if (caller.side === 'client') push(clientTables, c.name, at);
     } else if (c.kind === 'invoke') {
       if (!nodes.has(`edge:${c.name}`)) node(`edge:${c.name}`, 'edge_function', c.name, { missing: true });
       edge(caller.id, `edge:${c.name}`, 'invoke', c.confidence, at);
@@ -119,33 +123,13 @@ export function analyze(root, opts = {}) {
   for (const c of sql.cron.values()) refsFrom(`cron:${c.name}`, c.command, `${c.file}:${c.line}`, 'cron', null);
 
   // Findings
+  const graph = makeGraph([...nodes.values()], [...edges.values()]);
   const ign = cfg.ignore;
-  const findings = {};
-  findings.exposed_uncalled_functions = [...fns.values()]
-    .filter((f) => !f.name.includes('.') && f.kind === 'function' && !f.triggerOnly)
-    .filter((f) => f.anon || f.authenticated)
-    .filter((f) => !calledRpc.has(f.name) && !sqlCalled.has(f.name) && !ign.functions.includes(f.name))
-    .map((f) => ({ id: f.name, roles: ['anon', 'authenticated'].filter((r) => f[r]), securityDefiner: f.securityDefiner, at: `${f.file}:${f.line}` }));
-
-  const clientTableList = [...clientTables.keys()].filter((t) => !ign.tables.includes(t));
-  findings.client_tables_without_rls = clientTableList
-    .filter((t) => sql.tables.has(t) && !sql.tables.get(t).rls)
-    .map((t) => ({ id: t, at: clientTables.get(t)[0], sites: clientTables.get(t).length }));
-  findings.client_tables_without_policies = clientTableList
-    .filter((t) => sql.tables.has(t) && sql.tables.get(t).rls && sql.tables.get(t).policies.size === 0)
-    .map((t) => ({ id: t, at: clientTables.get(t)[0], sites: clientTables.get(t).length }));
-  findings.unknown_tables = [...new Set([...clientTables.keys(), ...code.calls.filter((c) => c.kind === 'table').map((c) => c.name)])]
-    .filter((t) => !sql.tables.has(t) && !sql.views.has(t) && !ign.tables.includes(t))
-    .map((t) => ({ id: t, at: (code.calls.find((c) => c.kind === 'table' && c.name === t) || {}).file }));
-  findings.missing_rpcs = [...calledRpc.keys()]
-    .filter((n) => !sql.functions.has(n) && !ign.rpcs.includes(n))
-    .map((n) => ({ id: n, at: calledRpc.get(n)[0].at, sites: calledRpc.get(n).length }));
-  findings.uncalled_edge_functions = edgeFns
-    .filter((e) => !invoked.has(e.name) && !sqlInvoked.has(e.name) && !ign.edgeFunctions.includes(e.name))
-    .map((e) => ({ id: e.name, at: e.dir, note: e.verifyJwt === false ? 'verify_jwt=false: possibly a webhook or public endpoint' : undefined }));
-  findings.missing_edge_functions = [...new Set([...invoked.keys(), ...sqlInvoked.keys()])]
-    .filter((n) => !edgeNames.has(n))
-    .map((n) => ({ id: n, at: (invoked.get(n) || [])[0] || (sqlInvoked.get(n) || [])[0] }));
+  const suppress = (f) => {
+    const cat = IGNORE_CATEGORY[f.rule];
+    return cat && (ign[cat] || []).includes(f.id) ? `ignore.${cat}` : null;
+  };
+  const ran = runRules([...coreRules, ...plugins], { graph, catalog: sql, config: cfg, root }, suppress);
 
   const info = {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),
@@ -174,8 +158,10 @@ export function analyze(root, opts = {}) {
     generated_at: new Date().toISOString(),
     root: path.basename(root),
     stats,
-    counts: Object.fromEntries(GATED.map((k) => [k, findings[k].length])),
-    findings,
+    rules: ran.rules,
+    counts: Object.fromEntries(ran.rules.map((r) => [r.id, ran.findings.filter((f) => f.rule === r.id).length])),
+    findings: ran.findings,
+    suppressed: ran.suppressed,
     info,
     nodes: [...nodes.values()],
     edges: [...edges.values()],

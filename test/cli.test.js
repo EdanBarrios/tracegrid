@@ -11,15 +11,17 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.join(here, '..', 'examples', 'demo-app');
 const bin = path.join(here, '..', 'bin', 'supareach.js');
 
-test('demo app findings', () => {
-  const r = analyze(demo);
-  const ids = (k) => r.findings[k].map((f) => f.id).sort();
-  assert.deepEqual(ids('exposed_uncalled_functions'), ['internal_cleanup', 'next_invoice_number']);
-  assert.deepEqual(ids('client_tables_without_rls'), ['audit_log']);
-  assert.deepEqual(ids('client_tables_without_policies'), ['invoices']);
-  assert.deepEqual(ids('missing_rpcs'), ['delete_everything']);
-  assert.deepEqual(ids('uncalled_edge_functions'), ['export-csv']); // payment-webhook ignored by config
-  assert.deepEqual(ids('unknown_tables'), []);
+test('demo app findings', async () => {
+  const r = await analyze(demo);
+  const ids = (k) => r.findings.filter((f) => f.rule === k).map((f) => f.id).sort();
+  assert.deepEqual(ids('exposed-uncalled-function'), ['internal_cleanup', 'next_invoice_number']);
+  assert.deepEqual(ids('client-table-without-rls'), ['audit_log']);
+  assert.deepEqual(ids('client-table-without-policies'), ['invoices']);
+  assert.deepEqual(ids('missing-rpc'), ['delete_everything']);
+  assert.deepEqual(ids('uncalled-edge-function'), ['export-csv']); // payment-webhook ignored by config
+  assert.deepEqual(ids('unknown-table'), []);
+  assert.deepEqual(r.suppressed.map((f) => f.fingerprint), ['uncalled-edge-function:payment-webhook']);
+  assert.ok(r.findings.every((f) => f.fingerprint === `${f.rule}:${f.id}` && f.level));
   assert.deepEqual(r.info.storage_buckets.map((b) => b.id).sort(), ['avatars', 'invoice-pdfs']);
   assert.equal(r.info.unresolved_dynamic_calls.length, 1);
   assert.equal(r.schema_version, 1);
@@ -44,12 +46,12 @@ test('CLI writes outputs and --check gates on rising counts', () => {
   assert.equal(r.status, 0, r.stderr.toString());
 
   const b = JSON.parse(fs.readFileSync(baseline, 'utf8'));
-  b.counts.missing_rpcs = 0;
-  b.ids.missing_rpcs = [];
+  b.counts['missing-rpc'] = 0;
+  b.ids['missing-rpc'] = [];
   fs.writeFileSync(baseline, JSON.stringify(b));
   r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', baseline, '--check']);
   assert.equal(r.status, 1);
-  assert.match(r.stderr.toString(), /FAIL missing_rpcs: 0 -> 1[\s\S]*delete_everything/);
+  assert.match(r.stderr.toString(), /FAIL missing-rpc: 0 -> 1[\s\S]*delete_everything/);
 
   r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', path.join(tmp, 'none.json'), '--check']);
   assert.equal(r.status, 2);

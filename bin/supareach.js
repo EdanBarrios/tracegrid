@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { analyze, GATED, SCHEMA_VERSION } from '../src/analyze.js';
+import { analyze, SCHEMA_VERSION } from '../src/analyze.js';
 import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
 
@@ -47,7 +47,7 @@ if (args.version) {
 
 const root = path.resolve(args.dir);
 if (!fs.existsSync(root)) { console.error(`No such directory: ${root}`); process.exit(2); }
-const r = analyze(root, { configFile: args.config });
+const r = await analyze(root, { configFile: args.config });
 
 if (args.output) {
   const out = path.resolve(args.out);
@@ -59,11 +59,13 @@ if (args.output) {
 }
 
 console.log(`${r.stats.files_scanned} files, ${r.stats.call_sites} call sites (${r.stats.unresolved} unresolved), ${r.stats.migrations} migrations (${r.stats.sql_unparsed} statements not understood), ${r.stats.edge_functions} edge functions`);
-for (const k of GATED) console.log(`  ${k.padEnd(32)} ${r.counts[k]}`);
+for (const k of Object.keys(r.counts)) console.log(`  ${k.padEnd(32)} ${r.counts[k]}`);
+const GATED = r.rules.filter((x) => x.level !== 'note').map((x) => x.id);
+const byRule = (k) => r.findings.filter((f) => f.rule === k);
 
 const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
 if (args.update) {
-  const b = { schema_version: SCHEMA_VERSION, counts: r.counts, ids: Object.fromEntries(GATED.map((k) => [k, r.findings[k].map((f) => f.id).sort()])) };
+  const b = { schema_version: SCHEMA_VERSION, counts: r.counts, ids: Object.fromEntries(GATED.map((k) => [k, byRule(k).map((f) => f.id).sort()])) };
   fs.writeFileSync(baselinePath, JSON.stringify(b, null, 2) + '\n');
   console.log(`Baseline written to ${baselinePath}`);
 }
@@ -77,7 +79,7 @@ if (args.check) {
     if (now > was) {
       failed = true;
       const known = new Set((b.ids && b.ids[k]) || []);
-      const fresh = r.findings[k].filter((f) => !known.has(f.id)).map((f) => `${f.id}${f.at ? ` (${f.at})` : ''}`);
+      const fresh = byRule(k).filter((f) => !known.has(f.id)).map((f) => `${f.id}${f.at ? ` (${f.at})` : ''}`);
       console.error(`FAIL ${k}: ${was} -> ${now}${fresh.length ? `\n    new: ${fresh.join('\n         ')}` : ''}`);
     } else if (now < was) console.log(`improved ${k}: ${was} -> ${now} (run --update-baseline to lock it in)`);
   }

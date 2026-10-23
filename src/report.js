@@ -1,21 +1,11 @@
 // Markdown report.
-const TITLES = {
-  exposed_uncalled_functions: ['Functions callable by anon/authenticated that nothing calls', 'No `.rpc()` in code, no cron job, trigger, policy, view or other SQL function references them. Each is reachable attack surface through PostgREST. Revoke the grant, or add to `ignore.functions` if a caller is coming.'],
-  client_tables_without_rls: ['Client-touched tables with RLS off', 'App code (outside edge functions) queries these, and the final migration state never enables row level security.'],
-  client_tables_without_policies: ['Client-touched tables with RLS on but no policies', 'RLS with no policy denies everything to anon/authenticated. Usually a bug if the client reads it.'],
-  missing_rpcs: ['RPCs called that no migration defines', 'Either created outside migrations (dashboard), dropped, or misspelled.'],
-  unknown_tables: ['Tables/views referenced in code that no migration defines', 'May live in another schema, be created outside migrations, or be misspelled.'],
-  uncalled_edge_functions: ['Edge functions with no caller', 'No `functions.invoke`, no `/functions/v1/<name>` URL in code, cron or SQL. Webhooks and auth hooks are legitimately uncalled; add them to `ignore.edgeFunctions`.'],
-  missing_edge_functions: ['Edge functions invoked that do not exist', 'Called by name or URL, but there is no `supabase/functions/<name>/index.*`.'],
-};
-
 const esc = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/`/g, "'");
 
 export function renderReport(r) {
   const L = [];
   L.push(`# supareach report: ${r.root}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
   L.push('## Summary', '', '| Finding | Count |', '|---|---|');
-  for (const [k, n] of Object.entries(r.counts)) L.push(`| ${TITLES[k][0]} | ${n} |`);
+  for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`, ${rule.level}) | ${r.counts[rule.id]} |`);
   L.push(`| Storage buckets referenced (info) | ${r.info.storage_buckets.length} |`);
   L.push(`| Unresolved dynamic names (info) | ${r.info.unresolved_dynamic_calls.length} |`);
   L.push(`| SQL statements not understood (info) | ${r.info.unparsed_sql.length} |`, '');
@@ -28,9 +18,9 @@ export function renderReport(r) {
     `- Final schema: ${s.tables} tables, ${s.views} views, ${s.functions} functions, ${s.policies} policies, ${s.cron_jobs} cron jobs.`,
     `- ${s.edge_functions} edge functions, ${s.distinct_edge_functions_invoked} invoked from code.`, '');
 
-  for (const [k, items] of Object.entries(r.findings)) {
-    const [title, why] = TITLES[k];
-    L.push(`## ${title} (${items.length})`, '', why, '');
+  for (const rule of r.rules) {
+    const items = r.findings.filter((f) => f.rule === rule.id);
+    L.push(`## ${rule.title} (${items.length})`, '', `\`${rule.id}\`, ${rule.level}${rule.plugin ? `, from plugin \`${rule.plugin}\`` : ''}. ${rule.why}`, '');
     if (!items.length) { L.push('None.', ''); continue; }
     for (const it of items) {
       const bits = [];
@@ -43,6 +33,11 @@ export function renderReport(r) {
     L.push('');
   }
 
+  if (r.suppressed.length) {
+    L.push(`## Suppressed (${r.suppressed.length})`, '', 'Findings silenced by config or an in-source hatch, with the reason given.', '');
+    for (const f of r.suppressed) L.push(`- \`${f.fingerprint}\`: ${esc(f.suppressed)}`);
+    L.push('');
+  }
   L.push(`## Storage buckets referenced (${r.info.storage_buckets.length})`, '');
   for (const b of r.info.storage_buckets) L.push(`- \`${b.id}\`: ${b.sites} site(s), first at \`${b.at}\``);
   L.push('');

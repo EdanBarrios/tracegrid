@@ -1,4 +1,6 @@
 {
+  "plugins": ["./supareach-rules.mjs"],
+  "protectedTables": ["audit_log", "invoices"],
   "ignore": {
     "edgeFunctions": ["payment-webhook"]
   }
