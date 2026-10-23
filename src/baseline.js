@@ -37,6 +37,6 @@ export function writeBaseline(file, r, prev, { force = false } = {}) {
   const added = prev ? next.filter((fp) => !prev.has(fp)) : next;
   const removed = prev ? [...prev].filter((fp) => !next.includes(fp)).sort() : [];
   if (prev && added.length && !force) return { refused: true, added, removed, total: next.length };
-  fs.writeFileSync(file, JSON.stringify({ schema_version: SCHEMA_VERSION, tool: 'supareach', findings: next }, null, 2) + '\n');
+  fs.writeFileSync(file, JSON.stringify({ schema_version: SCHEMA_VERSION, tool: 'tracegrid', findings: next }, null, 2) + '\n');
   return { refused: false, added, removed, total: next.length };
 }

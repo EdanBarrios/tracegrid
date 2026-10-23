@@ -1,5 +1,5 @@
 // Example plugin: a project-specific rule on the same contract as the core rules.
-// Loaded through "plugins" in supareach.config.json. Findings from it are baselined,
+// Loaded through "plugins" in tracegrid.config.json. Findings from it are baselined,
 // ignored and reported exactly like core findings.
 export const rules = [
   {

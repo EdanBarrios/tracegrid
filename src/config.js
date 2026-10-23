@@ -59,7 +59,7 @@ export const DEFAULTS = {
 
 /** @param {string} root @param {string} [file] @returns {Config} */
 export function loadConfig(root, file) {
-  const p = file ? path.resolve(file) : path.join(root, 'supareach.config.json');
+  const p = file ? path.resolve(file) : path.join(root, 'tracegrid.config.json');
   const c = structuredClone(DEFAULTS);
   Object.defineProperty(c, '_dir', { value: file ? path.dirname(p) : root, enumerable: false });
   Object.defineProperty(c, '_warnings', { value: [], enumerable: false });

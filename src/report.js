@@ -13,7 +13,7 @@ const TIER_OF_LEVEL = { error: 'fix', warning: 'review', note: 'info' };
 export function renderReport(r) {
   const L = [];
   r = { ...r, findings: r.findings.map((f) => (f.tier ? f : { ...f, tier: TIER_OF_LEVEL[f.level] || 'review' })) };
-  L.push(`# supareach report: ${esc(r.root)}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
+  L.push(`# tracegrid report: ${esc(r.root)}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
   if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${esc(w)}`, ''); }
   L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
   if (r.project) {
@@ -43,7 +43,7 @@ export function renderReport(r) {
     `- ${s.edge_functions} edge functions, ${s.distinct_edge_functions_invoked} invoked from code.`, '');
 
   // Rule `title` and `why` are emitted as Markdown without escaping. They are trusted: core rules ship
-  // with supareach, and plugin rules are code that only loads with --allow-plugins (refused on pull
+  // with tracegrid, and plugin rules are code that only loads with --allow-plugins (refused on pull
   // request events), so their author can already run anything. Finding data is always escaped.
   const TITLES = { fix: 'Fix', review: 'Review', info: 'Info' };
   for (const tier of ['fix', 'review', 'info']) {

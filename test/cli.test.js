@@ -9,7 +9,7 @@ import { analyze } from '../src/analyze.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.join(here, '..', 'examples', 'demo-app');
-const bin = path.join(here, '..', 'bin', 'supareach.js');
+const bin = path.join(here, '..', 'bin', 'tracegrid.js');
 
 test('demo app findings', async () => {
   const r = await analyze(demo, { allowPlugins: true });
@@ -38,7 +38,7 @@ test('demo app findings', async () => {
 const run = (...a) => spawnSync(process.execPath, [bin, ...a, '--allow-plugins'], { encoding: 'utf8' });
 
 test('CLI writes outputs; --check gates on fingerprints, not counts', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-'));
   const out = path.join(tmp, 'out');
   const baseline = path.join(tmp, 'baseline.json');
   let r = run(demo, '--out', out, '--baseline', baseline, '--update-baseline');
@@ -99,10 +99,10 @@ test('entry points: config with reason, hatch, and autoEntryPoints off', async (
   assert.deepEqual(r.info.external_entry_points.map((e) => e.id), ['export-csv']);
   assert.match(r.info.invalid_hatches.map((h) => h.error).join(), /no edge function named nope/);
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-'));
   fs.cpSync(demo, tmp, { recursive: true });
   const idx = path.join(tmp, 'supabase/functions/export-csv/index.ts');
-  fs.writeFileSync(idx, '// supareach: entry-point linked from the admin email\n' + fs.readFileSync(idx, 'utf8'));
+  fs.writeFileSync(idx, '// tracegrid: entry-point linked from the admin email\n' + fs.readFileSync(idx, 'utf8'));
   r = await analyze(tmp, { allowPlugins: true });
   assert.deepEqual(r.findings.filter((f) => f.rule === 'uncalled-edge-function').map((f) => f.id), []);
   assert.match(r.info.external_entry_points.find((e) => e.id === 'export-csv').source, /^hatch supabase\/functions\/export-csv\/index.ts:1$/);
@@ -110,7 +110,7 @@ test('entry points: config with reason, hatch, and autoEntryPoints off', async (
 });
 
 test('ignores without a reason are a config error (exit 2)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-'));
   const cfg = path.join(tmp, 'c.json');
   fs.writeFileSync(cfg, JSON.stringify({ ignore: { functions: ['internal_cleanup'] } }));
   let r = run(demo, '--no-output', '--config', cfg);

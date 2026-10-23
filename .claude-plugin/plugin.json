@@ -1,10 +1,10 @@
 {
-  "name": "supareach",
+  "name": "tracegrid",
   "description": "Ask who calls a Supabase table, RPC or edge function, what breaks if you revoke it, and what a signed-in user can reach that no code calls.",
   "version": "0.2.0",
   "author": { "name": "Edan Barrios" },
-  "homepage": "https://github.com/EdanBarrios/supareach",
-  "repository": "https://github.com/EdanBarrios/supareach",
+  "homepage": "https://github.com/EdanBarrios/tracegrid",
+  "repository": "https://github.com/EdanBarrios/tracegrid",
   "license": "MIT",
   "keywords": ["supabase", "postgres", "rls", "security", "static-analysis"]
 }

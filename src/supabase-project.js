@@ -37,7 +37,7 @@ export function resolveProject(root, cfg) {
       let found = findSupabaseDirs(root, 'config.toml');
       if (!found.length) found = findSupabaseDirs(root, 'migrations');
       if (found.length > 1) {
-        throw new ConfigError(`found ${found.length} Supabase projects (${found.join(', ')}); set "supabaseDir" in supareach.config.json to the one to check`);
+        throw new ConfigError(`found ${found.length} Supabase projects (${found.join(', ')}); set "supabaseDir" in tracegrid.config.json to the one to check`);
       }
       dir = found[0] || 'supabase';
       how = found.length ? 'auto-detected' : 'default (not found)';

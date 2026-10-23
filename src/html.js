@@ -44,12 +44,12 @@ export function renderHtml(r, opts = {}) {
   };
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>supareach: ${escapeHtml(r.root)}</title>
+<title>tracegrid: ${escapeHtml(r.root)}</title>
 <style>${CSS}</style></head><body>
 <div id="app">
 <aside id="side">
   <header>
-    <div class="brand"><span class="mark"></span><h1>SUPAREACH <span class="muted" id="rootname"></span></h1><button id="theme" class="ghost" title="Toggle light / dark">&#9680;</button></div>
+    <div class="brand"><span class="mark"></span><h1>TRACEGRID <span class="muted" id="rootname"></span></h1><button id="theme" class="ghost" title="Toggle light / dark">&#9680;</button></div>
     <nav id="tabs" role="tablist">
       <button role="tab" data-view="dash" class="on">Dashboard</button>
       <button role="tab" data-view="path">Path</button>
@@ -298,7 +298,7 @@ function renderList(){list.textContent='';var q=state.q;var flt=state.filter;
     list.appendChild(h('div',{cls:'grp lbl'},h('span',{text:flt?'Objects in this cell':'Objects'}),h('span',{text:String(objs.length)})));
     if(!objs.length)list.appendChild(h('div',{cls:'empty',text:'No object matches.'}));
     shown.forEach(function(n){var cc=callers(n.id).length;var b=h('button',{cls:'item'+(state.node===n.id&&!state.sel?' on':''),type:'button'},h('div',{cls:'r',text:(KINDNAME[n.type]||n.type)+(cc?'':' \u00b7 no caller in code')}),h('div',{cls:'n',text:n.label}));b.addEventListener('click',function(){selectNode(n.id)});list.appendChild(b)})}
-  if(!D.nodes.length){list.textContent='';list.appendChild(h('div',{cls:'empty',text:'The graph is empty: no code call sites and no schema objects were found. Check the warnings printed by the CLI (0 files scanned, 0 migrations) and set include / supabaseDir in supareach.config.json.'}))}
+  if(!D.nodes.length){list.textContent='';list.appendChild(h('div',{cls:'empty',text:'The graph is empty: no code call sites and no schema objects were found. Check the warnings printed by the CLI (0 files scanned, 0 migrations) and set include / supabaseDir in tracegrid.config.json.'}))}
 }
 $('q').addEventListener('input',function(ev){state.q=ev.target.value.trim().toLowerCase();renderList()});
 $('q').addEventListener('keydown',function(ev){if(ev.key==='Enter'){var f=D.findings.find(function(x){return state.tiers[x.tier]&&matchQ(x,state.q)});if(f)selectFinding(f)}if(ev.key==='Escape'){ev.target.value='';state.q='';renderList()}});
@@ -486,7 +486,7 @@ function drawMap(){vp.textContent='';$('dash').style.display='none';svg.style.di
 /* ---------- dashboard ---------- */
 var SURF=[['tables','Tables'],['rpc','RPC functions'],['views','Views'],['edge','Edge functions'],['buckets','Storage buckets'],['realtime','Realtime']];
 var ROLES=[['anon','anon'],['authenticated','authenticated'],['public','public (no key)']];
-var NA_NOTE={public:'Every Data API and Realtime request needs at least the anon key.',buckets:'Storage access is decided by policies on storage.objects, which supareach does not model.'};
+var NA_NOTE={public:'Every Data API and Realtime request needs at least the anon key.',buckets:'Storage access is decided by policies on storage.objects, which tracegrid does not model.'};
 function reach(){var live=D.nodes.filter(function(n){return !n.missing});
   var privs=function(n,r){if(n.privsByRole)return n.privsByRole[r]||[];return Array.isArray(n.clientPrivs)?n.clientPrivs:[]};
   var rt=new Set();D.links.forEach(function(e){if((e.ops||[]).indexOf('realtime')>=0)rt.add(e.target)});
@@ -529,7 +529,7 @@ function drawDash(){svg.style.display='none';var o=$('dash');o.style.display='bl
     h('div',{cls:'expl'},document.createTextNode('10 \u00d7 Fix + 3 \u00d7 Review + 1 per object anon can reach that no code calls ('+ex.anonUncalled+'). Lower is better; 0 means nothing to act on.'))));
   [['fix','Fix'],['review','Review'],['info','Info']].forEach(function(x){var c=h('div',{cls:'cell '+x[0]},h('div',{cls:'lbl',text:x[1]}),h('div',{cls:'v',text:String(t[x[0]]||0)}));st.appendChild(c)});
   if(D.baseline){st.appendChild(h('div',{cls:'cell bl'},h('div',{cls:'lbl',text:'Since baseline'}),h('div',null,h('b',{text:'+'+D.baseline.fresh}),document.createTextNode(' new  '),h('b',{text:'\u2212'+D.baseline.fixed}),document.createTextNode(' fixed')),h('div',{cls:'muted',text:D.baseline.file})))}
-  else st.appendChild(h('div',{cls:'cell bl'},h('div',{cls:'lbl',text:'Since baseline'}),h('div',{cls:'muted',text:'no baseline'}),h('div',{cls:'muted',text:'supareach --update-baseline'})));
+  else st.appendChild(h('div',{cls:'cell bl'},h('div',{cls:'lbl',text:'Since baseline'}),h('div',{cls:'muted',text:'no baseline'}),h('div',{cls:'muted',text:'tracegrid --update-baseline'})));
   o.appendChild(st);
   var g=h('div',{cls:'dg'});o.appendChild(g);
   /* reach matrix */

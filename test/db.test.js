@@ -10,7 +10,7 @@ import { analyze } from '../src/analyze.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.join(here, '..', 'examples', 'demo-app');
-const bin = path.join(here, '..', 'bin', 'supareach.js');
+const bin = path.join(here, '..', 'bin', 'tracegrid.js');
 const fixture = path.join(here, 'fixtures', 'demo-catalog.jsonl');
 const fakePsql = path.join(here, 'fixtures', 'fake-psql.mjs');
 const fixtureText = fs.readFileSync(fixture, 'utf8');
@@ -18,7 +18,7 @@ const URL_ = 'postgresql://ro_user:s3cr%40t@db.example.com:6543/postgres?sslmode
 
 test('URL is split into PG* env; the password never goes on argv', () => {
   assert.deepEqual(urlToEnv(URL_), {
-    PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'supareach', PGHOST: 'db.example.com', PGPORT: '6543', PGUSER: 'ro_user', PGPASSWORD: 's3cr@t', PGDATABASE: 'postgres', PGSSLMODE: 'require',
+    PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'tracegrid', PGHOST: 'db.example.com', PGPORT: '6543', PGUSER: 'ro_user', PGPASSWORD: 's3cr@t', PGDATABASE: 'postgres', PGSSLMODE: 'require',
   });
   assert.throws(() => urlToEnv('mysql://x'), DbError);
   assert.throws(() => urlToEnv('postgres://h/db?weird=1'), /unsupported parameter/);
@@ -63,7 +63,7 @@ test('catalog wins over migrations: dashboard revokes, dashboard functions and c
   assert.deepEqual(ids(db, 'client-table-without-policies'), ['invoices']);
   assert.ok(db.nodes.some((n) => n.id === 'bucket:avatars' && n.public === false && !n.missing));
   assert.deepEqual(db.warnings, []);
-  assert.equal(db.database.current_user, 'supareach_ro');
+  assert.equal(db.database.current_user, 'tracegrid_ro');
 });
 
 test('without cron.job access, cron comes from migrations, with a warning', () => {
@@ -75,9 +75,9 @@ test('without cron.job access, cron comes from migrations, with a warning', () =
 });
 
 test('CLI --db-url shells out to psql with env credentials and stdin SQL', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-'));
   const log = path.join(tmp, 'psql.json');
-  const env = { ...process.env, SUPAREACH_PSQL: fakePsql, FAKE_PSQL_FIXTURE: fixture, FAKE_PSQL_LOG: log };
+  const env = { ...process.env, TRACEGRID_PSQL: fakePsql, FAKE_PSQL_FIXTURE: fixture, FAKE_PSQL_LOG: log };
   let r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /schema from the database catalog/);
@@ -87,14 +87,14 @@ test('CLI --db-url shells out to psql with env credentials and stdin SQL', () =>
   assert.equal(call.env.PGSSLMODE, 'require');
   assert.match(call.stdin, /read only/);
 
-  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output'], { env: { ...env, SUPAREACH_DB_URL: URL_ }, encoding: 'utf8' });
+  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output'], { env: { ...env, TRACEGRID_DB_URL: URL_ }, encoding: 'utf8' });
   assert.match(r.stdout, /schema from the database catalog/);
 
   r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env: { ...env, FAKE_PSQL_FAIL: '1' }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /psql exited 2: psql: error: connection refused/);
 
-  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env: { ...env, SUPAREACH_PSQL: path.join(tmp, 'no-such-psql') }, encoding: 'utf8' });
+  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env: { ...env, TRACEGRID_PSQL: path.join(tmp, 'no-such-psql') }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /not found/);
   fs.rmSync(tmp, { recursive: true, force: true });

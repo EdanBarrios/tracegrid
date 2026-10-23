@@ -186,7 +186,7 @@ test('unparsed statements touching grants or policies are flagged risky and rais
   const path = await import('node:path');
   const { scanMigrations } = await import('../src/scan-sql.js');
   const { analyze } = await import('../src/analyze.js');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-'));
   fs.mkdirSync(path.join(tmp, 'supabase/migrations'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'supabase/migrations/1_a.sql'), `
     create table t (id int);

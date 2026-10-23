@@ -9,7 +9,7 @@ import { analyze } from '../src/analyze.js';
 import { scanSource } from '../src/scan-code.js';
 import { project, rm } from './helpers.js';
 
-const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'supareach.js');
+const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tracegrid.js');
 
 const SQL = `
 create table public.items (id bigint primary key, owner uuid);
@@ -30,7 +30,7 @@ create function public.people_items(p public.people) returns setof public.items 
 export async function run(files, { sql = '', config, links, opts } = {}) {
   const dir = project({ 'supabase/migrations/20240101000000_init.sql': SQL + sql, ...files });
   for (const [p, t] of Object.entries(links || {})) { fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true }); fs.symlinkSync(t, path.join(dir, p)); }
-  if (config) fs.writeFileSync(path.join(dir, 'supareach.config.json'), JSON.stringify(config));
+  if (config) fs.writeFileSync(path.join(dir, 'tracegrid.config.json'), JSON.stringify(config));
   try { return await analyze(dir, opts); } finally { rm(dir); }
 }
 const fp = (r) => new Set(r.findings.map((f) => f.fingerprint));
@@ -55,7 +55,7 @@ test('F1 zero code files, zero call sites and zero migrations are loud', async (
   const r3 = await analyze(d);
   assert.ok(r3.scope_problems.some((w) => /0 migrations/.test(w)));
   // --check refuses an empty result instead of passing it
-  fs.writeFileSync(path.join(d, 'supareach.baseline.json'), '{"findings":[]}');
+  fs.writeFileSync(path.join(d, 'tracegrid.baseline.json'), '{"findings":[]}');
   const c = spawnSync(process.execPath, [bin, d, '--no-output', '--check'], { encoding: 'utf8' });
   assert.equal(c.status, 2, c.stdout + c.stderr);
   assert.match(c.stderr, /empty, not clean/);
@@ -146,7 +146,7 @@ test('monorepo: the Supabase project is auto-detected and named; several need su
   fs.mkdirSync(path.join(d, 'other/supabase'), { recursive: true });
   fs.writeFileSync(path.join(d, 'other/supabase/config.toml'), '');
   await assert.rejects(analyze(d), /found 2 Supabase projects .*supabaseDir/);
-  fs.writeFileSync(path.join(d, 'supareach.config.json'), '{ "supabaseDir": "apps/db/supabase" }');
+  fs.writeFileSync(path.join(d, 'tracegrid.config.json'), '{ "supabaseDir": "apps/db/supabase" }');
   assert.equal((await analyze(d)).project.how, 'config');
   rm(d);
 });
@@ -342,7 +342,7 @@ test('auth hooks in config.toml are callers; a client-callable hook function is 
 });
 
 test('F20 hatches work with CR-only line endings', async () => {
-  const r = await run({ 'src/a.ts': "declare const supabase: any;\r\r// supareach: ignore missing-rpc test reason\rsupabase.rpc('nope_fn');\r" });
+  const r = await run({ 'src/a.ts': "declare const supabase: any;\r\r// tracegrid: ignore missing-rpc test reason\rsupabase.rpc('nope_fn');\r" });
   assert.ok(!fp(r).has('missing-rpc:nope_fn'));
 });
 

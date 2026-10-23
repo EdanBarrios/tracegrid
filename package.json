@@ -1,10 +1,10 @@
 {
-  "name": "supareach",
+  "name": "tracegrid",
   "version": "0.2.0",
   "description": "Map how your app code reaches your Supabase schema: tables, RPCs, edge functions, storage, grants and RLS. Static, offline, no AI.",
   "type": "module",
   "bin": {
-    "supareach": "bin/supareach.js"
+    "tracegrid": "bin/tracegrid.js"
   },
   "files": [
     "bin",
@@ -23,7 +23,7 @@
   },
   "scripts": {
     "test": "node test/run.mjs",
-    "demo": "node bin/supareach.js --demo"
+    "demo": "node bin/tracegrid.js --demo"
   },
   "keywords": [
     "supabase",
@@ -35,11 +35,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EdanBarrios/supareach.git"
+    "url": "git+https://github.com/EdanBarrios/tracegrid.git"
   },
-  "homepage": "https://github.com/EdanBarrios/supareach#readme",
+  "homepage": "https://github.com/EdanBarrios/tracegrid#readme",
   "bugs": {
-    "url": "https://github.com/EdanBarrios/supareach/issues"
+    "url": "https://github.com/EdanBarrios/tracegrid/issues"
   },
   "license": "MIT",
   "author": "Edan Barrios",

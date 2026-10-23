@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /** Write { relpath: text | Buffer } into a fresh temp dir; returns the dir. */
-export function project(files, prefix = 'supareach-test-') {
+export function project(files, prefix = 'tracegrid-test-') {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   for (const [p, t] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(d, p)), { recursive: true });

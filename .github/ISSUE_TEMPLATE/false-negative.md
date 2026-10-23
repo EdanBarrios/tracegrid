@@ -1,6 +1,6 @@
 ---
 name: False negative
-about: supareach missed a call site, a grant, or a finding
+about: tracegrid missed a call site, a grant, or a finding
 labels: false-negative
 ---
 
@@ -18,4 +18,4 @@ labels: false-negative
 
 **What it printed** (summary line and the relevant part of report.md):
 
-**Mode**: migrations / `--db-url`  ·  **Version**: `npx supareach --version`
+**Mode**: migrations / `--db-url`  ·  **Version**: `npx tracegrid --version`

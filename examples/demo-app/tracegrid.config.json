@@ -1,4 +1,4 @@
 {
-  "plugins": ["./supareach-rules.mjs"],
+  "plugins": ["./tracegrid-rules.mjs"],
   "protectedTables": ["audit_log", "invoices"]
 }

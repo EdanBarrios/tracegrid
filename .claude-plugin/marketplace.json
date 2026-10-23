@@ -1,14 +1,14 @@
 {
-  "name": "supareach",
+  "name": "tracegrid",
   "owner": {
     "name": "Edan Barrios"
   },
   "metadata": {
-    "description": "supareach: static, offline map of how app code reaches a Supabase schema (tables, RPCs, edge functions, storage, grants, RLS), with a Claude Code skill for reading its findings."
+    "description": "tracegrid: static, offline map of how app code reaches a Supabase schema (tables, RPCs, edge functions, storage, grants, RLS), with a Claude Code skill for reading its findings."
   },
   "plugins": [
     {
-      "name": "supareach",
+      "name": "tracegrid",
       "source": "./",
       "description": "Supabase reachability: who calls X, what breaks if you revoke Y, dead RPCs and edge functions."
     }

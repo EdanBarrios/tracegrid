@@ -183,7 +183,7 @@ export const coreRules = [
     level: 'warning',
     tier: 'review',
     title: 'Edge functions with no caller',
-    why: 'No `functions.invoke`, no `/functions/v1/<name>` URL in code, cron or SQL, and not declared as an external entry point. Webhooks, OAuth callbacks and auth hooks are legitimately uncalled: declare them in `entryPoints` or with a `// supareach: entry-point <reason>` hatch. `verify_jwt = false` functions are treated as entry points automatically (`autoEntryPoints`).',
+    why: 'No `functions.invoke`, no `/functions/v1/<name>` URL in code, cron or SQL, and not declared as an external entry point. Webhooks, OAuth callbacks and auth hooks are legitimately uncalled: declare them in `entryPoints` or with a `// tracegrid: entry-point <reason>` hatch. `verify_jwt = false` functions are treated as entry points automatically (`autoEntryPoints`).',
     run({ graph, unresolved }) {
       return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && callers(graph, n.id).length === 0)
         .map((n) => caveat({ id: n.label, node: n.id, at: n.at, note: n.verifyJwt === false ? 'verify_jwt=false (autoEntryPoints is off)' : undefined }, couldReach(unresolved, 'invoke', n.label), 'functions.invoke / URL'));
@@ -207,7 +207,7 @@ export const coreRules = [
     level: 'warning',
     tier: 'review',
     title: 'Edge functions that use a service_role client before any recognised gate',
-    why: 'A service_role / secret-key client bypasses RLS and grants. Reported when the first data use of that client (a read, write, rpc, storage or auth.admin call) comes before every gate supareach recognises: `auth.getUser`, `getClaims`, JWT, webhook or HMAC verification (including `verify*Signature` helpers, svix / standard-webhooks headers, constant-time compares), a read through a client built from the anon key plus the request\'s Authorization header that returns or throws when the row is missing, a sha-256 hashed opaque token, a rate-limit RPC that returns early. Heuristic and text-based: a gate it does not recognise looks like no gate, and a recognised one is not proof the check is correct. A review item, never a fix.',
+    why: 'A service_role / secret-key client bypasses RLS and grants. Reported when the first data use of that client (a read, write, rpc, storage or auth.admin call) comes before every gate tracegrid recognises: `auth.getUser`, `getClaims`, JWT, webhook or HMAC verification (including `verify*Signature` helpers, svix / standard-webhooks headers, constant-time compares), a read through a client built from the anon key plus the request\'s Authorization header that returns or throws when the row is missing, a sha-256 hashed opaque token, a rate-limit RPC that returns early. Heuristic and text-based: a gate it does not recognise looks like no gate, and a recognised one is not proof the check is correct. A review item, never a fix.',
     run({ graph }) {
       return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && n.serviceBeforeAuth).map((n) => {
         const s = n.serviceBeforeAuth;

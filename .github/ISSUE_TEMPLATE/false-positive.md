@@ -1,6 +1,6 @@
 ---
 name: False positive
-about: supareach reported something that is not true
+about: tracegrid reported something that is not true
 labels: false-positive
 ---
 
@@ -18,4 +18,4 @@ labels: false-positive
 // call site
 ```
 
-**Mode**: migrations / `--db-url`  ·  **Version**: `npx supareach --version`
+**Mode**: migrations / `--db-url`  ·  **Version**: `npx tracegrid --version`

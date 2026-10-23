@@ -161,7 +161,7 @@ export async function analyze(root, opts = {}) {
   const fnTargets = (name) => fnIdsByName.get(name) || [node(`fn:${name}`, 'function', name, { schema: schemaOf(name), missing: true }).id];
   const hints = edgeHints(root, edgeFns, files, code.calls);
   for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.entry, ...(hints.get(e.name) || {}) });
-  // External entry points: config, `// supareach: entry-point <reason>` hatches, verify_jwt = false.
+  // External entry points: config, `// tracegrid: entry-point <reason>` hatches, verify_jwt = false.
   const entries = [];
   const entryInvalid = [];
   for (const ep of cfg.entryPoints) {
@@ -347,7 +347,7 @@ export async function analyze(root, opts = {}) {
 
   // Loud failures: an empty side of the analysis makes every "nothing calls" finding meaningless.
   const scope_problems = [];
-  if (!files.length) scope_problems.push(`0 code files matched \`include\` (${cfg.include.join(', ')}); every "nothing calls" finding is meaningless. Set "include" in supareach.config.json.`);
+  if (!files.length) scope_problems.push(`0 code files matched \`include\` (${cfg.include.join(', ')}); every "nothing calls" finding is meaningless. Set "include" in tracegrid.config.json.`);
   else if (!code.calls.length && !code.unresolved.length) scope_problems.push(`${files.length} code files scanned but 0 Supabase call sites found; check "include" and that the code uses supabase-js.`);
   if (catalog.source === 'migrations' && !catalog.stats.migrations) scope_problems.push(`0 migrations found in ${project.migrations}; the schema side is empty. Set "supabaseDir" or "migrations", or use --db-url.`);
   warnings.unshift(...scope_problems);
@@ -392,7 +392,7 @@ export async function analyze(root, opts = {}) {
     // Graph section: networkx node-link format (Graphify-compatible): nodes, links, relation, confidence.
     directed: true,
     multigraph: false,
-    graph: { name: path.basename(root), tool: 'supareach' },
+    graph: { name: path.basename(root), tool: 'tracegrid' },
     nodes: [...nodes.values()],
     links: [...edges.values()],
   };

@@ -12,22 +12,22 @@ import { DbError } from '../src/db.js';
 import { readBaseline, writeBaseline, compareBaseline, BaselineError } from '../src/baseline.js';
 import { toSarif, githubAnnotations, stepSummary } from '../src/ci.js';
 
-const HELP = `supareach [dir] [options]
-supareach --demo            run on the bundled example project
-supareach help              this text
+const HELP = `tracegrid [dir] [options]
+tracegrid --demo            run on the bundled example project
+tracegrid help              this text
 
 What can a signed-in user reach that no code calls? Maps how app code reaches a
 Supabase schema and reports dead or risky surface. Static, offline by default.
 Scans the whole project and auto-detects the Supabase directory; see the README
-for supareach.config.json.
+for tracegrid.config.json.
 
 Options:
-  --out <dir>          Output directory (default ./supareach-out)
-  --config <file>      Config file (default <dir>/supareach.config.json)
-  --baseline <file>    Baseline file (default <dir>/supareach.baseline.json)
+  --out <dir>          Output directory (default ./tracegrid-out)
+  --config <file>      Config file (default <dir>/tracegrid.config.json)
+  --baseline <file>    Baseline file (default <dir>/tracegrid.baseline.json)
   --db-url <url>       Read the schema from a live database (postgres:// URL) instead of
                        replaying migrations. Runs psql in a read-only transaction; use a
-                       read-only role. Also read from SUPAREACH_DB_URL.
+                       read-only role. Also read from TRACEGRID_DB_URL.
   --check              Exit 1 if any new Fix-tier finding is not in the baseline
   --check-level <t>    What --check gates: fix (default) or review (fix + review).
                        Info findings never gate
@@ -42,7 +42,7 @@ Options:
                        repository: never use this on pull requests (refused on GitHub
                        pull_request and pull_request_target events)
   --no-plugins         Run without the plugins listed in the config
-  --demo               Analyze the example project bundled with supareach
+  --demo               Analyze the example project bundled with tracegrid
   -h, --help           Show this help
   -v, --version        Show version
 
@@ -54,7 +54,7 @@ error, or (with --check) a scan that found no code, no call sites or no migratio
 const RESERVED = new Set(['explain', 'path', 'init']);
 
 function parseArgs(argv) {
-  const a = { dir: null, out: 'supareach-out', output: true };
+  const a = { dir: null, out: 'tracegrid-out', output: true };
   const need = (i, x) => { if (i >= argv.length || argv[i].startsWith('--')) fail(`${x} needs a value`); return argv[i]; };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
@@ -76,9 +76,9 @@ function parseArgs(argv) {
     else if (x === '--demo') a.demo = true;
     else if (x.startsWith('-')) fail(`Unknown option ${oneLine(x)}\n\n${HELP}`);
     else if (a.dir === null && i === 0 && x === 'help') a.help = true;
-    else if (a.dir === null && i === 0 && RESERVED.has(x)) fail(`supareach ${x}: not available in this version (the name is reserved for a later one). See supareach --help.`);
+    else if (a.dir === null && i === 0 && RESERVED.has(x)) fail(`tracegrid ${x}: not available in this version (the name is reserved for a later one). See tracegrid --help.`);
     else if (a.dir === null) a.dir = x;
-    else fail(`Unexpected argument ${oneLine(x)}: supareach takes one directory (got ${oneLine(a.dir)} already). Options start with --.`);
+    else fail(`Unexpected argument ${oneLine(x)}: tracegrid takes one directory (got ${oneLine(a.dir)} already). Options start with --.`);
   }
   if (a.demo && a.dir !== null) fail('--demo takes no directory');
   if (a.dir === null) a.dir = '.';
@@ -104,16 +104,16 @@ async function main() {
   const root = path.resolve(demo || args.dir);
   if (!fs.existsSync(root)) fail(`No such directory: ${root}`);
   let r;
-  const dbUrl = args.dbUrl || process.env.SUPAREACH_DB_URL || undefined;
+  const dbUrl = args.dbUrl || process.env.TRACEGRID_DB_URL || undefined;
   if (args.allowPlugins && args.noPlugins) fail('--allow-plugins and --no-plugins are exclusive');
-  if (args.allowPlugins) { const why = pluginRefusal(); if (why) fail(`supareach: ${why}`); }
-  // The demo's plugin ships inside the supareach package, not in the scanned project: it is trusted.
+  if (args.allowPlugins) { const why = pluginRefusal(); if (why) fail(`tracegrid: ${why}`); }
+  // The demo's plugin ships inside the tracegrid package, not in the scanned project: it is trusted.
   try { r = await analyze(root, { configFile: args.config, dbUrl, allowPlugins: !!args.allowPlugins || (!!demo && !args.noPlugins), noPlugins: !!args.noPlugins }); } catch (e) {
-    if (e instanceof ConfigError || e instanceof RuleError || e instanceof DbError) fail(oneLine(`supareach: ${e.message}`));
+    if (e instanceof ConfigError || e instanceof RuleError || e instanceof DbError) fail(oneLine(`tracegrid: ${e.message}`));
     throw e;
   }
 
-  const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
+  const baselinePath = path.resolve(args.baseline || path.join(root, 'tracegrid.baseline.json'));
   if (args.output) {
     // The page shows new / fixed findings against the baseline when one is readable (display only).
     let baseline = null;
@@ -165,7 +165,7 @@ async function main() {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const prefixFrom = (base) => { const p = path.relative(base, root).split(path.sep).join('/'); return p.startsWith('..') ? '' : p; };
   if (args.sarif) {
-    const fallbackUri = [args.config ? path.relative(root, path.resolve(args.config)) : 'supareach.config.json', 'supabase/config.toml', 'package.json']
+    const fallbackUri = [args.config ? path.relative(root, path.resolve(args.config)) : 'tracegrid.config.json', 'supabase/config.toml', 'package.json']
       .find((f) => fs.existsSync(path.join(root, f))) || 'supabase/config.toml';
     fs.writeFileSync(path.resolve(args.sarif), JSON.stringify(toSarif(r, { version: pkg.version, prefix: prefixFrom(process.cwd()), fallbackUri }), null, 1));
     console.log(`SARIF written to ${args.sarif}`);
@@ -191,7 +191,7 @@ async function main() {
   if (args.check) {
     let known = new Set();
     if (fs.existsSync(baselinePath)) known = readBaseline(baselinePath);
-    else warn(`check: no baseline at ${baselinePath}, so every ${args.checkLevel === 'review' ? 'Fix and Review' : 'Fix'} finding counts as new. To accept today's findings and fail only on new ones: supareach --update-baseline, then commit supareach.baseline.json.`);
+    else warn(`check: no baseline at ${baselinePath}, so every ${args.checkLevel === 'review' ? 'Fix and Review' : 'Fix'} finding counts as new. To accept today's findings and fail only on new ones: tracegrid --update-baseline, then commit tracegrid.baseline.json.`);
     const c = compareBaseline(known, r, args.checkLevel || 'fix');
     fresh = c.fresh;
     for (const f of c.fresh) warn(`NEW ${f.tier} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
@@ -209,4 +209,4 @@ async function main() {
   return code;
 }
 
-main().then((c) => process.exit(c), (e) => { console.error(e instanceof BaselineError ? oneLine(`supareach: ${e.message}`) : String((e && e.stack) || e).split('\n').map(oneLine).join('\n')); process.exit(2); });
+main().then((c) => process.exit(c), (e) => { console.error(e instanceof BaselineError ? oneLine(`tracegrid: ${e.message}`) : String((e && e.stack) || e).split('\n').map(oneLine).join('\n')); process.exit(2); });

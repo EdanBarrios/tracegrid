@@ -42,9 +42,9 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
     runs: [{
       tool: {
         driver: {
-          name: 'supareach',
+          name: 'tracegrid',
           version,
-          informationUri: 'https://github.com/EdanBarrios/supareach',
+          informationUri: 'https://github.com/EdanBarrios/tracegrid',
           rules: r.rules.map((x) => ({
             id: x.id,
             name: x.id.replace(/[^A-Za-z0-9]+(.)?/g, (_, c) => (c ? c.toUpperCase() : '')),
@@ -56,7 +56,7 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
           })),
         },
       },
-      automationDetails: { id: `supareach/${r.source}/` },
+      automationDetails: { id: `tracegrid/${r.source}/` },
       invocations: [{
         executionSuccessful: !(r.scope_problems || []).length,
         toolExecutionNotifications: [
@@ -75,7 +75,7 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
           level: levelOf(f, r.sarifLevels),
           message: { text: describe(f, byId.get(f.rule)) + (f.at && /^db:/.test(f.at) ? ` [${f.at}]` : '') },
           locations: [{ physicalLocation: { artifactLocation: { uri: uriOf(loc.file), uriBaseId: '%SRCROOT%' }, region: { startLine: loc.line } } }],
-          partialFingerprints: { 'supareach/v1': f.fingerprint },
+          partialFingerprints: { 'tracegrid/v1': f.fingerprint },
           properties: { source: f.source, tier: f.tier, ...(f.confidence ? { confidence: f.confidence } : {}) },
         };
       }),
@@ -92,7 +92,7 @@ export function githubAnnotations(findings, rules, prefix = '', levels = {}) {
   const byId = new Map(rules.map((x) => [x.id, x]));
   return findings.map((f) => {
     const loc = location(f.at, prefix);
-    const props = [loc ? `file=${escProp(loc.file)}` : null, loc ? `line=${loc.line}` : null, `title=${escProp(`supareach ${f.rule}`)}`].filter(Boolean).join(',');
+    const props = [loc ? `file=${escProp(loc.file)}` : null, loc ? `line=${loc.line}` : null, `title=${escProp(`tracegrid ${f.rule}`)}`].filter(Boolean).join(',');
     const lvl = levelOf(f, levels);
     return lvl === 'none' ? null : `::${CMD[lvl] || 'warning'} ${props}::${escData(describe(f, byId.get(f.rule)))}`;
   }).filter(Boolean);
@@ -100,7 +100,7 @@ export function githubAnnotations(findings, rules, prefix = '', levels = {}) {
 
 /** Markdown for $GITHUB_STEP_SUMMARY. `fresh` is the list of new findings when --check ran, else null. */
 export function stepSummary(r, fresh) {
-  const L = ['## supareach', ''];
+  const L = ['## tracegrid', ''];
   L.push(`Schema source: **${r.source}**. ${r.stats.call_sites} call sites, ${r.stats.unresolved} unresolved.`, '');
   for (const w of r.warnings || []) L.push(`> **Warning:** ${mdText(w)}`, '');
   if (r.tiers) L.push(`**Fix ${r.tiers.fix}** · Review ${r.tiers.review} · Info ${r.tiers.info}`, '');

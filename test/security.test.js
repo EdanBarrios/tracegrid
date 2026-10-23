@@ -1,4 +1,4 @@
-// Security regressions: supareach runs in CI on pull requests, where the PR author controls the
+// Security regressions: tracegrid runs in CI on pull requests, where the PR author controls the
 // config, migrations, scanned files and node_modules/.bin. Fixtures are generated in temp dirs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,15 +13,15 @@ import { renderReport } from '../src/report.js';
 import { stepSummary } from '../src/ci.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const bin = path.join(here, '..', 'bin', 'supareach.js');
+const bin = path.join(here, '..', 'bin', 'tracegrid.js');
 const run = (args, env = {}, opts = {}) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, ...opts });
 
-const EVIL_PLUGIN = `import fs from 'node:fs';\nfs.writeFileSync(process.env.EXFIL_FILE, 'db=' + process.env.SUPAREACH_DB_URL);\nexport const rules = [];\n`;
+const EVIL_PLUGIN = `import fs from 'node:fs';\nfs.writeFileSync(process.env.EXFIL_FILE, 'db=' + process.env.TRACEGRID_DB_URL);\nexport const rules = [];\n`;
 
 test('S0-1 plugins listed in the project config are not imported without --allow-plugins', () => {
-  const d = project({ 'evil.mjs': EVIL_PLUGIN, 'supareach.config.json': '{ "plugins": ["./evil.mjs"] }', 'src/a.ts': 'export const z = supabase.rpc("ok");\n' });
+  const d = project({ 'evil.mjs': EVIL_PLUGIN, 'tracegrid.config.json': '{ "plugins": ["./evil.mjs"] }', 'src/a.ts': 'export const z = supabase.rpc("ok");\n' });
   const marker = path.join(d, 'exfil.txt');
-  const r = run([d, '--no-output'], { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', EXFIL_FILE: marker, SUPAREACH_DB_URL: 'postgresql://ro:S3CRET@127.0.0.1:1/db', SUPAREACH_PSQL: '/usr/bin/false' });
+  const r = run([d, '--no-output'], { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', EXFIL_FILE: marker, TRACEGRID_DB_URL: 'postgresql://ro:S3CRET@127.0.0.1:1/db', TRACEGRID_PSQL: '/usr/bin/false' });
   assert.ok(!fs.existsSync(marker), 'the plugin module ran');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /plugins? .*(disabled|refused|--allow-plugins)/i);
@@ -44,7 +44,7 @@ test('S0-1 plugins listed in the project config are not imported without --allow
 test('S0-1b plugin paths outside the project root are refused even when plugins are allowed', () => {
   const outside = project({ 'evil.mjs': EVIL_PLUGIN });
   const d = project({ 'src/a.ts': 'export const z = supabase.rpc("ok");\n' });
-  fs.writeFileSync(path.join(d, 'supareach.config.json'), JSON.stringify({ plugins: [path.relative(d, path.join(outside, 'evil.mjs')).split(path.sep).join('/')] }));
+  fs.writeFileSync(path.join(d, 'tracegrid.config.json'), JSON.stringify({ plugins: [path.relative(d, path.join(outside, 'evil.mjs')).split(path.sep).join('/')] }));
   const marker = path.join(outside, 'exfil.txt');
   const r = run([d, '--no-output', '--allow-plugins'], { EXFIL_FILE: marker, GITHUB_ACTIONS: '' });
   assert.ok(!fs.existsSync(marker), 'plugin outside root was imported');
@@ -58,13 +58,13 @@ test('S0-2 a psql found under the project directory is never executed', { skip: 
     'node_modules/.bin/psql': '#!/bin/sh\necho "pw=$PGPASSWORD" > "$HIJACK_OUT"\n' });
   fs.chmodSync(path.join(H, 'node_modules', '.bin', 'psql'), 0o755);
   const marker = path.join(H, 'hijack.txt');
-  const PATH = path.join(H, 'node_modules', '.bin') + path.delimiter + process.env.PATH; // what `npx supareach` does
-  const r = run(['.', '--no-output', '--db-url', 'postgresql://ro:S3CRET@db.invalid:5432/postgres'], { PATH, HIJACK_OUT: marker, SUPAREACH_PSQL: '' }, { cwd: H });
+  const PATH = path.join(H, 'node_modules', '.bin') + path.delimiter + process.env.PATH; // what `npx tracegrid` does
+  const r = run(['.', '--no-output', '--db-url', 'postgresql://ro:S3CRET@db.invalid:5432/postgres'], { PATH, HIJACK_OUT: marker, TRACEGRID_PSQL: '' }, { cwd: H });
   assert.ok(!fs.existsSync(marker), 'node_modules/.bin/psql from the project ran and received PGPASSWORD');
   assert.equal(r.status, 2, r.stdout + r.stderr);
   assert.match(r.stderr, /psql.*(inside|under) the project|refus/i);
-  // A relative SUPAREACH_PSQL is refused too.
-  const r2 = run(['.', '--no-output', '--db-url', 'postgresql://ro:x@db.invalid/postgres'], { SUPAREACH_PSQL: 'node_modules/.bin/psql', HIJACK_OUT: marker }, { cwd: H });
+  // A relative TRACEGRID_PSQL is refused too.
+  const r2 = run(['.', '--no-output', '--db-url', 'postgresql://ro:x@db.invalid/postgres'], { TRACEGRID_PSQL: 'node_modules/.bin/psql', HIJACK_OUT: marker }, { cwd: H });
   assert.equal(r2.status, 2);
   assert.ok(!fs.existsSync(marker));
   rm(H);
@@ -110,7 +110,7 @@ test('S1-3 no console line produced from project data starts with "::"', () => {
     ].join('\n'),
     'src/weird name#1.ts': "export const g = () => supabase.from('t\\r::notice::x').select('*');\n",
     'supabase/migrations/0001_init.sql': 'create table "t<b>bold</b>" (id int);\ncreate function "f""n"(x int) returns int language sql as $$ select 1 $$;\n',
-    'b.json': '{"schema_version":1,"tool":"supareach","findings":[]}',
+    'b.json': '{"schema_version":1,"tool":"tracegrid","findings":[]}',
   });
   const b = path.join(F, 'b.json');
   const r = run([F, '--no-output', '--baseline', b, '--check']); // no --github: nothing legitimate starts with ::
@@ -129,11 +129,11 @@ test('S2-1 include globs cannot leave the project root', () => {
 });
 
 test('S2-1b migrations / functionsDir / include outside the root are a config error', () => {
-  const base = project({ 'repo/supareach.config.json': '{ "migrations": "../outside/sql" }', 'outside/sql/0001_x.sql': 'create table t (x int);' });
+  const base = project({ 'repo/tracegrid.config.json': '{ "migrations": "../outside/sql" }', 'outside/sql/0001_x.sql': 'create table t (x int);' });
   assert.throws(() => loadConfig(path.join(base, 'repo')), /outside/);
-  fs.writeFileSync(path.join(base, 'repo', 'supareach.config.json'), '{ "include": ["../outside/**/*.ts"] }');
+  fs.writeFileSync(path.join(base, 'repo', 'tracegrid.config.json'), '{ "include": ["../outside/**/*.ts"] }');
   assert.throws(() => loadConfig(path.join(base, 'repo')), /outside/);
-  fs.writeFileSync(path.join(base, 'repo', 'supareach.config.json'), '{ "functionsDir": "/etc" }');
+  fs.writeFileSync(path.join(base, 'repo', 'tracegrid.config.json'), '{ "functionsDir": "/etc" }');
   assert.throws(() => loadConfig(path.join(base, 'repo')), /outside/);
   rm(base);
 });
@@ -176,7 +176,7 @@ test('S2-2b sqlRefs is linear: an 80 KB identifier finishes in under 1 s', async
 test('S2-2c hatch comment regex is linear on trailing whitespace', async () => {
   const { parseHatches } = await import('../src/hatches.js');
   const t0 = performance.now();
-  parseHatches('// supareach: names x' + ' '.repeat(80000) + '*/x');
+  parseHatches('// tracegrid: names x' + ' '.repeat(80000) + '*/x');
   assert.ok(performance.now() - t0 < 1000, 'quadratic regex');
 });
 
@@ -212,7 +212,7 @@ test('S3-1 SARIF percent-encodes file paths', async () => {
 });
 
 test('S3-2 __proto__ / constructor keys in the config have no effect; unknown keys warn', async () => {
-  const d = project({ 'supareach.config.json': '{ "__proto__": { "polluted": true, "include": ["x/**"] }, "constructor": { "prototype": { "p": 1 } }, "inclde": ["src/**"] }' });
+  const d = project({ 'tracegrid.config.json': '{ "__proto__": { "polluted": true, "include": ["x/**"] }, "constructor": { "prototype": { "p": 1 } }, "inclde": ["src/**"] }' });
   const cfg = loadConfig(d);
   assert.equal(cfg.polluted, undefined);
   assert.equal(Object.getPrototypeOf(cfg), Object.prototype);

@@ -1,4 +1,6 @@
-# supareach
+# tracegrid
+
+tracegrid — map every path from your app's code to its database, and catch what's exposed. Supabase today; Firebase next.
 
 **What can a signed-in user reach that no code calls?**
 
@@ -10,21 +12,21 @@ triggers, policies or views calls; edge functions with no caller; tables and vie
 reads without RLS. Static and offline by default. No AI, no telemetry. **v0.x, best effort:
 read [Limitations](#limitations) before acting on a finding.** Not affiliated with Supabase.
 
-![graph.html for the bundled demo app](https://raw.githubusercontent.com/EdanBarrios/supareach/main/docs/screenshot.png)
+![graph.html for the bundled demo app](https://raw.githubusercontent.com/EdanBarrios/tracegrid/main/docs/screenshot.png)
 
 ## Quickstart
 
 ```sh
 cd your-supabase-app
-npx --yes supareach@0.2.0            # scans the whole project, offline
+npx --yes tracegrid@0.2.0            # scans the whole project, offline
 ```
 
 It prints which Supabase project and code roots it used, then the top findings with
-`file:line`. Full output goes to `./supareach-out/`. Try the bundled example:
-`npx --yes supareach@0.2.0 --demo`.
+`file:line`. Full output goes to `./tracegrid-out/`. Try the bundled example:
+`npx --yes tracegrid@0.2.0 --demo`.
 
 If it warns about **0 code files, 0 Supabase call sites or 0 migrations, the result is empty,
-not clean**: set `include` or `supabaseDir` in `supareach.config.json` (with `--check` such a
+not clean**: set `include` or `supabaseDir` in `tracegrid.config.json` (with `--check` such a
 run exits 2).
 
 | File | What |
@@ -53,7 +55,7 @@ Every finding has a **tier**:
 - **Info**: intended or benign patterns, such as helpers that RLS policies need.
 
 The tier is not part of the fingerprint, so a finding that moves between tiers keeps its
-baseline entry. Accepted findings (`supareach: ignore` hatches and `ignore` config) are not
+baseline entry. Accepted findings (`tracegrid: ignore` hatches and `ignore` config) are not
 findings at all; they are listed under Suppressed.
 
 | Rule | Level | Meaning |
@@ -69,7 +71,7 @@ findings at all; they are listed under Suppressed.
 | `unknown-table` | warning | code queries a table or view the schema does not define |
 | `uncalled-edge-function` | warning | no `functions.invoke`, `/functions/v1/<name>` URL, cron, webhook, auth hook or SQL caller, and not declared an entry point |
 | `missing-edge-function` | error | invoked, but no such function in `supabase/functions` |
-| `edge-service-role-before-auth` | warning | an edge function's first service_role / secret-key data use comes before every gate supareach recognises (heuristic; review, never fix; info for head/count-only endpoints) |
+| `edge-service-role-before-auth` | warning | an edge function's first service_role / secret-key data use comes before every gate tracegrid recognises (heuristic; review, never fix; info for head/count-only endpoints) |
 | `edge-request-controlled-fetch` | warning | an edge function calls `fetch()` with a URL taken from the request body (review) |
 
 Tiers by rule: `exposed-uncalled-function`, `client-table-without-rls`,
@@ -109,7 +111,7 @@ and may carry a `note` or `confidence: low`.
   in trusted workflows (see [SECURITY.md](SECURITY.md)).
 
 ```sh
-SUPAREACH_DB_URL="postgresql://readonly_user:...@host:5432/postgres" npx --yes supareach@0.2.0
+TRACEGRID_DB_URL="postgresql://readonly_user:...@host:5432/postgres" npx --yes tracegrid@0.2.0
 ```
 
 It never asks for a Supabase API key: it talks Postgres, not the Data API.
@@ -142,9 +144,9 @@ only, no type checker) it records:
 - `[auth.hook.*]` in config.toml and database-webhook triggers count as callers.
 
 Anything it cannot resolve (`supabase.from(tableName)`) is **counted and listed, never
-dropped**. A `// supareach: names a,b` comment above the call or its wrapper resolves it.
+dropped**. A `// tracegrid: names a,b` comment above the call or its wrapper resolves it.
 
-## Config: `supareach.config.json` (optional)
+## Config: `tracegrid.config.json` (optional)
 
 ```json
 {
@@ -160,7 +162,7 @@ dropped**. A `// supareach: names a,b` comment above the call or its wrapper res
     "functions": [{ "name": "partner_sync", "reason": "called by a partner over the Data API" }],
     "findings": [{ "id": "unknown-table:legacy_view", "reason": "created by the analytics job" }]
   },
-  "plugins": ["./.github/supareach-rules.mjs"]
+  "plugins": ["./.github/tracegrid-rules.mjs"]
 }
 ```
 
@@ -171,18 +173,18 @@ warn. Paths must stay inside the project. `ignore` also has `edgeFunctions`, `ta
 SARIF and GitHub annotation level per tier; `"none"` drops a tier's annotations.
 
 **Edge-function entry points.** Webhooks, OAuth callbacks and health checks have no caller in
-your code. Declare them in `entryPoints`, or put `// supareach: entry-point <reason>` in the
+your code. Declare them in `entryPoints`, or put `// tracegrid: entry-point <reason>` in the
 function. With `autoEntryPoints` (default on), `verify_jwt = false` functions are entry points.
 
 **In-source hatches** (greppable):
 
 ```ts
-// supareach: names tasks, projects            resolve a dynamic name on the next line / wrapper
-// supareach: ignore missing-rpc <reason>      silence a rule for the call on this or the next line
-// supareach: entry-point <reason>             in an edge function: called from outside
+// tracegrid: names tasks, projects            resolve a dynamic name on the next line / wrapper
+// tracegrid: ignore missing-rpc <reason>      silence a rule for the call on this or the next line
+// tracegrid: entry-point <reason>             in an edge function: called from outside
 ```
 ```sql
--- supareach: ignore exposed-uncalled-function <reason>   applies to the next create/alter
+-- tracegrid: ignore exposed-uncalled-function <reason>   applies to the next create/alter
 ```
 
 ## Plugins
@@ -191,7 +193,7 @@ Project rules use the same contract as the core rules. **Plugins are code from t
 repository: they load only with `--allow-plugins`, which is refused on pull-request events.**
 
 ```js
-// .github/supareach-rules.mjs
+// .github/tracegrid-rules.mjs
 export const rules = [{
   id: 'acme/no-client-writes-to-ledger',
   level: 'error',
@@ -208,13 +210,13 @@ export const rules = [{
 ```
 
 `graph` has `nodes`, `links`, `node(id)`, `incoming(id)`, `outgoing(id)`; `catalog` is the
-normalised schema. See `examples/demo-app/supareach-rules.mjs`.
+normalised schema. See `examples/demo-app/tracegrid-rules.mjs`.
 
 ## CI: fail when things get worse
 
 ```sh
-npx --yes supareach@0.2.0 --update-baseline      # writes supareach.baseline.json; commit it
-npx --yes supareach@0.2.0 --check --no-output    # exit 1 on a new Fix finding not in the baseline
+npx --yes tracegrid@0.2.0 --update-baseline      # writes tracegrid.baseline.json; commit it
+npx --yes tracegrid@0.2.0 --check --no-output    # exit 1 on a new Fix finding not in the baseline
 ```
 
 The baseline is a list of fingerprints (Fix and Review findings). By default `--check` fails on
@@ -224,23 +226,23 @@ request controls the file (see SECURITY.md). `--update-baseline` only removes en
 from an existing baseline; adding needs `--force`. Exit codes: 0 clean, 1 new findings, 2 usage
 or tool error, or an empty scan under `--check`.
 
-GitHub Actions, hardened: read-only token, actions pinned by SHA, an exact supareach version,
+GitHub Actions, hardened: read-only token, actions pinned by SHA, an exact tracegrid version,
 no `--db-url` and no plugins on pull requests.
 
 ```yaml
-name: supareach
+name: tracegrid
 on: pull_request
 permissions:
   contents: read
 jobs:
-  supareach:
+  tracegrid:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npx --yes supareach@0.2.0 --check --github --no-plugins
+      - run: npx --yes tracegrid@0.2.0 --check --github --no-plugins
   # Optional code-scanning alerts, in their own job so only it gets security-events: write
   # (needs GitHub Code Security on private repositories).
   sarif:
@@ -253,20 +255,20 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npx --yes supareach@0.2.0 --no-output --no-plugins --sarif supareach.sarif
+      - run: npx --yes tracegrid@0.2.0 --no-output --no-plugins --sarif tracegrid.sarif
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with: { sarif_file: supareach.sarif }
+        with: { sarif_file: tracegrid.sarif }
 ```
 
-Or use the composite action in this repository (`uses: EdanBarrios/supareach@<sha>` with
+Or use the composite action in this repository (`uses: EdanBarrios/tracegrid@<sha>` with
 `version`, `args` and `sarif` inputs). Run `--db-url` checks from a trusted workflow (push to
 the default branch, schedule), never from `pull_request`.
 
 ## Options
 
 ```
-supareach [dir] [options]
-supareach help | --demo
+tracegrid [dir] [options]
+tracegrid help | --demo
   --out <dir>  --config <file>  --baseline <file>  --db-url <url>
   --check [--check-level fix|review]  --update-baseline [--force]  --sarif <file>  --github  --no-output
   --allow-plugins | --no-plugins  --demo  -h/--help  -v/--version
@@ -277,11 +279,11 @@ supareach help | --demo
 ## For coding agents
 
 The repository ships a Claude Code plugin and a portable skill
-([`skills/supareach/SKILL.md`](skills/supareach/SKILL.md)):
+([`skills/tracegrid/SKILL.md`](skills/tracegrid/SKILL.md)):
 
 ```sh
-claude plugin marketplace add EdanBarrios/supareach
-claude plugin install supareach@supareach
+claude plugin marketplace add EdanBarrios/tracegrid
+claude plugin install tracegrid@tracegrid
 ```
 
 For other agents, paste [`docs/AGENTS.md`](docs/AGENTS.md) into your `AGENTS.md`.
@@ -292,7 +294,7 @@ Use these alongside it; they answer different questions.
 
 - **Supabase Security Advisor / splinter** lints the database: for example, every SECURITY
   DEFINER function `authenticated` can execute. It cannot tell which ones the app uses;
-  supareach narrows that to the ones with no caller anywhere.
+  tracegrid narrows that to the ones with no caller anywhere.
 - **supabase-grants-lint** and **eslint-plugin-supabase** check the code-to-table direction
   with types, in the editor. They do not cover RPC reachability, edge functions, cron or
   storage.
@@ -305,7 +307,7 @@ Use these alongside it; they answer different questions.
 
 Read these before revoking anything.
 
-- **"Nothing calls it" means "no call site supareach recognised".** Grep for the name before
+- **"Nothing calls it" means "no call site tracegrid recognised".** Grep for the name before
   revoking. Static analysis, no type checker: findings are leads.
 - **What is scanned:** see the summary line and the code roots it prints. Code outside
   `include`, in excluded folders, or generated at build time is invisible. Tests, stories and
@@ -339,7 +341,7 @@ Read these before revoking anything.
 ```sh
 npm install
 npm test                         # node:test; psql is faked, no database needed
-node bin/supareach.js --demo
+node bin/tracegrid.js --demo
 ```
 
 Node 20+, ESM, plain JavaScript. The only dependency is `typescript` (for its parser). See

@@ -26,7 +26,7 @@ async function run(migrations, { code = {}, config, opts } = {}) {
   for (const [f, sql] of Object.entries(migs)) files[`supabase/migrations/${f}`] = sql;
   for (const [f, src] of Object.entries(code)) files[f] = src;
   if (Object.keys(code).some((k) => k.startsWith('src/'))) files['src/c.ts'] = CLIENT;
-  if (config) files['supareach.config.json'] = JSON.stringify(config);
+  if (config) files['tracegrid.config.json'] = JSON.stringify(config);
   const d = project(files);
   try { return await analyze(d, opts); } finally { rm(d); }
 }

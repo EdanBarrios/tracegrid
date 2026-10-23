@@ -1,4 +1,4 @@
-// Output escaping and path containment. Everything supareach prints or writes can contain names
+// Output escaping and path containment. Everything tracegrid prints or writes can contain names
 // that came from the scanned project (a fork PR controls those), so it is treated as untrusted data.
 import fs from 'node:fs';
 import path from 'node:path';

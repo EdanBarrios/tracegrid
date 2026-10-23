@@ -1,4 +1,4 @@
-name: supareach
+name: tracegrid
 description: Map how your app reaches its Supabase schema and fail on new findings (uncalled RPCs, client tables without RLS, ...).
 author: Edan Barrios
 branding:
@@ -6,7 +6,7 @@ branding:
   color: green
 inputs:
   version:
-    description: Exact supareach version from npm. Pinned; bump deliberately.
+    description: Exact tracegrid version from npm. Pinned; bump deliberately.
     default: 0.2.0
   args:
     description: Extra arguments. Never pass --db-url or --allow-plugins on pull_request events.
@@ -25,12 +25,12 @@ runs:
     - shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        SUPAREACH_VERSION: ${{ inputs.version }}
-        SUPAREACH_ARGS: ${{ inputs.args }}
-        SUPAREACH_SARIF: ${{ inputs.sarif }}
+        TRACEGRID_VERSION: ${{ inputs.version }}
+        TRACEGRID_ARGS: ${{ inputs.args }}
+        TRACEGRID_SARIF: ${{ inputs.sarif }}
       run: |
         set -euo pipefail
         sarif=()
-        if [ -n "$SUPAREACH_SARIF" ]; then sarif=(--sarif "$SUPAREACH_SARIF"); fi
+        if [ -n "$TRACEGRID_SARIF" ]; then sarif=(--sarif "$TRACEGRID_SARIF"); fi
         # shellcheck disable=SC2086
-        npx --yes "supareach@${SUPAREACH_VERSION}" $SUPAREACH_ARGS "${sarif[@]}"
+        npx --yes "tracegrid@${TRACEGRID_VERSION}" $TRACEGRID_ARGS "${sarif[@]}"

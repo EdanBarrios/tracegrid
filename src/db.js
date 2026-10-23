@@ -1,9 +1,9 @@
 // Catalog mode: read the schema from a live database through `psql`, inside a read-only transaction.
 //
-// No npm dependency: shells out to the `psql` client (override with SUPAREACH_PSQL). The connection
+// No npm dependency: shells out to the `psql` client (override with TRACEGRID_PSQL). The connection
 // URL is split into PG* environment variables so the password never appears in a process list.
 // Only catalog tables and has_*_privilege() are read; nothing is written, and no Supabase API key is
-// involved (supareach talks Postgres, never PostgREST, so it never needs service_role).
+// involved (tracegrid talks Postgres, never PostgREST, so it never needs service_role).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -37,8 +37,8 @@ select jsonb_build_object('section', 'meta', 'data', jsonb_build_object(
   'default_acl', (select coalesce(jsonb_agg(jsonb_build_object('role', pg_get_userbyid(d.defaclrole), 'schema', coalesce(dn.nspname, ''), 'objtype', d.defaclobjtype, 'acl', d.defaclacl::text[]) order by dn.nspname, d.defaclobjtype), '[]')
     from pg_default_acl d left join pg_namespace dn on dn.oid = d.defaclnamespace where pg_get_userbyid(d.defaclrole) = 'postgres')));
 select
-  coalesce(has_table_privilege(to_regclass('cron.job')::oid, 'SELECT'), false) as supareach_has_cron,
-  coalesce(has_table_privilege(to_regclass('storage.buckets')::oid, 'SELECT'), false) as supareach_has_buckets
+  coalesce(has_table_privilege(to_regclass('cron.job')::oid, 'SELECT'), false) as tracegrid_has_cron,
+  coalesce(has_table_privilege(to_regclass('storage.buckets')::oid, 'SELECT'), false) as tracegrid_has_buckets
 \gset
 select jsonb_build_object('section', 'functions', 'data', coalesce(jsonb_agg(jsonb_build_object(
   'schema', n.nspname, 'name', p.proname, 'nargs', p.pronargs,
@@ -77,12 +77,12 @@ where not t.tgisinternal and (${appSchema('pn.nspname')} or pn.nspname = 'supaba
 select jsonb_build_object('section', 'event_triggers', 'data', coalesce(jsonb_agg(jsonb_build_object(
   'name', e.evtname, 'fn_schema', pn.nspname, 'fn', p.proname) order by e.evtname), '[]'))
 from pg_event_trigger e join pg_proc p on p.oid = e.evtfoid join pg_namespace pn on pn.oid = p.pronamespace;
-\if :supareach_has_cron
+\if :tracegrid_has_cron
 select jsonb_build_object('section', 'cron', 'data', coalesce(jsonb_agg(jsonb_build_object(
   'name', coalesce(jobname, 'job ' || jobid), 'schedule', schedule, 'command', command, 'active', active) order by jobid), '[]'))
 from cron.job;
 \endif
-\if :supareach_has_buckets
+\if :tracegrid_has_buckets
 select jsonb_build_object('section', 'buckets', 'data', coalesce(jsonb_agg(jsonb_build_object('name', id, 'public', public) order by id), '[]'))
 from storage.buckets;
 \endif
@@ -96,7 +96,7 @@ export function urlToEnv(url) {
   let u;
   try { u = new URL(url); } catch { throw new DbError('--db-url must be a postgres:// or postgresql:// URL'); }
   if (!/^postgres(ql)?:$/.test(u.protocol)) throw new DbError('--db-url must be a postgres:// or postgresql:// URL');
-  const env = { PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'supareach' };
+  const env = { PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'tracegrid' };
   if (u.hostname) env.PGHOST = decodeURIComponent(u.hostname.replace(/^\[|\]$/g, ''));
   if (u.port) env.PGPORT = u.port;
   if (u.username) env.PGUSER = decodeURIComponent(u.username);
@@ -130,21 +130,21 @@ export function readCatalog(url, { exec = execPsql, root } = {}) {
 }
 
 /**
- * Absolute path of the psql binary to run. SUPAREACH_PSQL must be absolute. Otherwise PATH is
+ * Absolute path of the psql binary to run. TRACEGRID_PSQL must be absolute. Otherwise PATH is
  * searched, and the first psql found must not be relative, inside the project, or under a
  * node_modules directory: `npx`/`npm exec` put the project's node_modules/.bin first on PATH, and a
  * pull request can commit a fake psql there that would receive the database password.
  */
 export function resolvePsql(root, env = process.env) {
-  const refuse = (p, why) => { throw new DbError(`refusing to run psql at ${p}: ${why}. Set SUPAREACH_PSQL to the absolute path of a trusted psql.`); };
+  const refuse = (p, why) => { throw new DbError(`refusing to run psql at ${p}: ${why}. Set TRACEGRID_PSQL to the absolute path of a trusted psql.`); };
   const check = (p) => {
     if (root && isInside(root, p)) refuse(p, 'it is inside the project directory');
     if (p.split(/[\\/]/).includes('node_modules')) refuse(p, 'it is under node_modules');
     return p;
   };
-  if (env.SUPAREACH_PSQL) {
-    if (!path.isAbsolute(env.SUPAREACH_PSQL)) throw new DbError('SUPAREACH_PSQL must be an absolute path');
-    return check(env.SUPAREACH_PSQL);
+  if (env.TRACEGRID_PSQL) {
+    if (!path.isAbsolute(env.TRACEGRID_PSQL)) throw new DbError('TRACEGRID_PSQL must be an absolute path');
+    return check(env.TRACEGRID_PSQL);
   }
   const names = process.platform === 'win32' ? ['psql.exe', 'psql.cmd', 'psql.bat'] : ['psql'];
   for (const dir of (env.PATH || env.Path || '').split(path.delimiter)) {
@@ -157,7 +157,7 @@ export function resolvePsql(root, env = process.env) {
       return check(p);
     }
   }
-  throw new DbError('psql not found. --db-url needs the PostgreSQL client (psql) on PATH, or set SUPAREACH_PSQL to its absolute path.');
+  throw new DbError('psql not found. --db-url needs the PostgreSQL client (psql) on PATH, or set TRACEGRID_PSQL to its absolute path.');
 }
 
 function execPsql(sql, env, { root } = {}) {
@@ -165,7 +165,7 @@ function execPsql(sql, env, { root } = {}) {
   const r = spawnSync(bin, ['-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-f', '-'], {
     input: sql, encoding: 'utf8', env: { ...process.env, PGOPTIONS: '', ...env }, maxBuffer: 256 * 1024 * 1024, timeout: 120000,
   });
-  if (r.error && r.error.code === 'ENOENT') throw new DbError(`${bin} not found. --db-url needs the PostgreSQL client (psql) on PATH, or set SUPAREACH_PSQL.`);
+  if (r.error && r.error.code === 'ENOENT') throw new DbError(`${bin} not found. --db-url needs the PostgreSQL client (psql) on PATH, or set TRACEGRID_PSQL.`);
   if (r.error) throw new DbError(`psql failed: ${r.error.message}`);
   if (r.status !== 0) throw new DbError(`psql exited ${r.status}: ${(r.stderr || '').trim().split('\n').slice(0, 3).join(' / ')}`);
   return r.stdout;

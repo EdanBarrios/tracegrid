@@ -5,6 +5,8 @@ the rule contract or `graph.json` (whose `schema_version` is bumped when its sha
 
 ## 0.2.0
 
+Renamed from supareach before the first release.
+
 A correctness and safety release driven by five red-team reviews (security, SQL semantics,
 code extraction, nine real repositories, launch readiness). Findings changed for most
 projects: re-run `--update-baseline` after reviewing them.
@@ -75,7 +77,7 @@ projects: re-run `--update-baseline` after reviewing them.
   `pull_request_target` events; `--no-plugins` skips them. Plugin paths must be inside the
   project.
 - `psql` is resolved to an absolute path outside the project (never `node_modules/.bin` or a
-  relative `PATH` entry); `SUPAREACH_PSQL` must be absolute. `?options=` is rejected,
+  relative `PATH` entry); `TRACEGRID_PSQL` must be absolute. `?options=` is rejected,
   `PGOPTIONS` cleared, and the catalog transaction pins `search_path = pg_catalog, pg_temp`.
 - Reads are confined to the project root (globs, `supabaseDir`, `migrations`,
   `functionsDir`; symlinks only when the target is inside).
@@ -162,9 +164,9 @@ First public version, renamed from the internal working name.
   the core rules and by plugins loaded from `plugins` in the config. Example plugin in
   `examples/demo-app`.
 - `granted-helper-function` (note): executable by `anon`/`authenticated`, used only from SQL.
-- Catalog mode `--db-url` (or `SUPAREACH_DB_URL`): reads the live schema through `psql` in
+- Catalog mode `--db-url` (or `TRACEGRID_DB_URL`): reads the live schema through `psql` in
   a read-only transaction; wins over migration replay. Every finding records its `source`.
-- Edge-function entry points: `entryPoints` with reasons, `// supareach: entry-point` hatch,
+- Edge-function entry points: `entryPoints` with reasons, `// tracegrid: entry-point` hatch,
   and `verify_jwt = false` detected as an external entry (`autoEntryPoints`).
 - In-source hatches: `names`, `ignore <rule> <reason>` (code and SQL), `entry-point`.
 - `--sarif` (SARIF 2.1.0) and `--github` (annotations and step summary).

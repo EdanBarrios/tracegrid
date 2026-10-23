@@ -741,7 +741,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
   const hatches = parseHatches(text);
   const namesAt = new Map(hatches.filter((h) => h.directive === 'names' && !h.error).map((h) => [h.line, h.names]));
 
-  /** Names from a `supareach: names` hatch on the call's line, the line above, or above its enclosing function. */
+  /** Names from a `tracegrid: names` hatch on the call's line, the line above, or above its enclosing function. */
   function hatchNames(node) {
     if (!namesAt.size) return null;
     const lines = [lineOf(node)];

@@ -1,23 +1,23 @@
-// In-source hatches: greppable comments that feed facts to supareach or silence a finding.
+// In-source hatches: greppable comments that feed facts to tracegrid or silence a finding.
 //
-//   // supareach: names a,b,c                 resolve a dynamic name on this/next line (or in this wrapper)
-//   // supareach: ignore <rule> <reason>      silence <rule> for the call(s) on this or the next line
-//   -- supareach: ignore <rule> <reason>      (SQL) silence <rule> for the object created by the next statement
-//   // supareach: entry-point <reason>        (edge function) called from outside the codebase
+//   // tracegrid: names a,b,c                 resolve a dynamic name on this/next line (or in this wrapper)
+//   // tracegrid: ignore <rule> <reason>      silence <rule> for the call(s) on this or the next line
+//   -- tracegrid: ignore <rule> <reason>      (SQL) silence <rule> for the object created by the next statement
+//   // tracegrid: entry-point <reason>        (edge function) called from outside the codebase
 //
 // `ignore` and `entry-point` silence findings, so they need a reason. `names` only adds facts.
 
 // Linear: no lazy group followed by optional trailing whitespace (that backtracked on long lines).
-const RE = /(?:\/\/|--|\/\*|^\s*\*)\s*supareach:\s*([a-z-]+)(?:[ \t]+([^\n]*))?$/;
+const RE = /(?:\/\/|--|\/\*|^\s*\*)\s*tracegrid:\s*([a-z-]+)(?:[ \t]+([^\n]*))?$/;
 export const DIRECTIVES = ['names', 'ignore', 'entry-point'];
 
 /** @returns {{ line: number, directive: string, args: string, error?: string, rule?: string, reason?: string, names?: string[] }[]} */
 export function parseHatches(text) {
   const out = [];
-  if (!text.includes('supareach:')) return out;
+  if (!text.includes('tracegrid:')) return out;
   const lines = text.split(/\r\n|\r|\n/);
   for (let i = 0; i < lines.length; i++) {
-    if (!lines[i].includes('supareach:')) continue;
+    if (!lines[i].includes('tracegrid:')) continue;
     const m = RE.exec(lines[i].length > 4096 ? lines[i].slice(0, 4096) : lines[i]);
     if (!m) continue;
     const h = { line: i + 1, directive: m[1], args: (m[2] || '').replace(/\*\/\s*$/, '').trim() };
@@ -27,10 +27,10 @@ export function parseHatches(text) {
       if (!h.names.length) h.error = 'names: list at least one name';
     } else if (h.directive === 'ignore') {
       const p = /^(\S+)\s+(.+)$/.exec(h.args);
-      if (!p) h.error = 'ignore: needs a rule id and a reason, e.g. `supareach: ignore missing-rpc created by the billing service`';
+      if (!p) h.error = 'ignore: needs a rule id and a reason, e.g. `tracegrid: ignore missing-rpc created by the billing service`';
       else { h.rule = p[1]; h.reason = p[2]; }
     } else if (h.directive === 'entry-point') {
-      if (!h.args) h.error = 'entry-point: needs a reason, e.g. `supareach: entry-point Stripe webhook`';
+      if (!h.args) h.error = 'entry-point: needs a reason, e.g. `tracegrid: entry-point Stripe webhook`';
       else h.reason = h.args;
     }
     out.push(h);

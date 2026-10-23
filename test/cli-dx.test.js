@@ -10,14 +10,14 @@ import { project, rm } from './helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, '..');
-const bin = path.join(repo, 'bin', 'supareach.js');
+const bin = path.join(repo, 'bin', 'tracegrid.js');
 const run = (args, opts = {}) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8', ...opts });
 const json = (f) => JSON.parse(fs.readFileSync(path.join(repo, f), 'utf8'));
 
 test('help alias, extra positionals rejected, reserved subcommands', () => {
   const h = run(['help']);
   assert.equal(h.status, 0);
-  assert.match(h.stdout, /supareach --demo/);
+  assert.match(h.stdout, /tracegrid --demo/);
   const x = run(['a', 'b']);
   assert.equal(x.status, 2);
   assert.match(x.stderr, /Unexpected argument b/);
@@ -57,14 +57,14 @@ test('versions agree; package ships the demo, skill and plugin; SARIF points at 
   assert.equal(json('.claude-plugin/plugin.json').version, pkg.version);
   assert.match(fs.readFileSync(path.join(repo, 'action.yml'), 'utf8'), new RegExp(`default: ${pkg.version.replace(/\./g, '\\.')}`));
   assert.equal(pkg.engines.node, '>=20');
-  assert.match(pkg.repository.url, /github\.com\/EdanBarrios\/supareach/);
+  assert.match(pkg.repository.url, /github\.com\/EdanBarrios\/tracegrid/);
   for (const f of ['examples', 'skills', '.claude-plugin']) assert.ok(pkg.files.includes(f), f);
   assert.equal(Object.keys(pkg.dependencies).join(), 'typescript');
-  const skill = fs.readFileSync(path.join(repo, 'skills/supareach/SKILL.md'), 'utf8');
-  assert.match(skill, /^---\nname: supareach\ndescription: /);
+  const skill = fs.readFileSync(path.join(repo, 'skills/tracegrid/SKILL.md'), 'utf8');
+  assert.match(skill, /^---\nname: tracegrid\ndescription: /);
   assert.ok(skill.split('\n').length < 500);
   assert.match(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), /!\[[^\]]*\]\(https:\/\//);
   const s = toSarif({ rules: [], findings: [], source: 'migrations' });
-  assert.equal(s.runs[0].tool.driver.informationUri, 'https://github.com/EdanBarrios/supareach');
+  assert.equal(s.runs[0].tool.driver.informationUri, 'https://github.com/EdanBarrios/tracegrid');
 });
 

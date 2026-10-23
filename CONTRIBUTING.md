@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping. supareach is small on purpose: plain ESM JavaScript, `node:test`, one
+Thanks for helping. tracegrid is small on purpose: plain ESM JavaScript, `node:test`, one
 runtime dependency (`typescript`, for its parser). Please keep it that way.
 
 ## Setup
@@ -8,7 +8,7 @@ runtime dependency (`typescript`, for its parser). Please keep it that way.
 ```sh
 npm install
 npm test                         # node --test; psql is faked, no database needed
-node bin/supareach.js --demo     # the bundled example
+node bin/tracegrid.js --demo     # the bundled example
 ```
 
 Node 20 or newer. CI runs Node 20/22/24 on Linux, macOS and Windows.
@@ -20,7 +20,7 @@ Open an issue with the template, or better, a PR that adds a failing test:
 - **SQL** (grants, policies, RLS, replay): add a case to `test/sql-semantics.test.js` with the
   smallest migration that shows it. If the claim is about Postgres behaviour, say how you
   checked it (Postgres docs link, or a transaction you rolled back).
-- **Code** (a call supareach misses or invents): add a case to `test/extraction.test.js`
+- **Code** (a call tracegrid misses or invents): add a case to `test/extraction.test.js`
   with the smallest source file.
 
 Fixtures must be synthetic. Never paste code, schema or names from a private project.

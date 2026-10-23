@@ -20,5 +20,5 @@ jobs:
         with: { node-version: '${{ matrix.node }}' }
       - run: npm ci --ignore-scripts
       - run: npm test
-      - run: node bin/supareach.js --demo --no-output
+      - run: node bin/tracegrid.js --demo --no-output
       - run: npm pack --dry-run

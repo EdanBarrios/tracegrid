@@ -887,7 +887,7 @@ function handleCron(st, text, loc) {
 
 const SUBJECT_RE = new RegExp(String.raw`^(?:create\s+(?:or\s+replace\s+)?(?:function|procedure|(?:materialized\s+)?view|table(?:\s+if\s+not\s+exists)?)|alter\s+(?:function|procedure|table|view))\s+` + QNAME, 'i');
 
-/** `-- supareach: ignore <rule> <reason>` applies to the object the next statement creates or alters. */
+/** `-- tracegrid: ignore <rule> <reason>` applies to the object the next statement creates or alters. */
 export function sqlHatches(st, hatches, stmts, file) {
   for (const h of hatches) {
     if (h.error) { st.hatches.invalid.push({ file, line: h.line, error: h.error }); continue; }

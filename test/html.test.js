@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renderHtml, FG3D } from '../src/html.js';
 
-const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'supareach.js');
+const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tracegrid.js');
 const EVIL = '</script><img src=x onerror=alert(1)>\u2028\u2029<!--';
 
 function hostile() {
@@ -40,7 +40,7 @@ test('graph.html parses: JSON data round-trips and the client script compiles', 
   assert.doesNotThrow(() => new Function(code));
   assert.doesNotMatch(json, /<|\u2028|\u2029/, 'escaped: no <, U+2028 or U+2029 inside the data element');
   // The <title> is the only place data is interpolated into markup, and it is HTML-escaped.
-  assert.match(h, /<title>supareach: &lt;\/script&gt;&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(h, /<title>tracegrid: &lt;\/script&gt;&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(h.replace(/<script[\s\S]*?<\/script>/g, ''), /<img/);
 });
 
@@ -66,13 +66,13 @@ test('graph.html: 3D library is pinned, loaded lazily with SRI and crossorigin, 
   assert.doesNotMatch(h, /<script[^>]+src=/, 'no script element with src in the markup: the 3D library loads only on demand');
   assert.doesNotMatch(h, /<link[^>]+href=/);
   assert.match(code, /needs internet/);
-  // If a copy of the library is available locally (SUPAREACH_FG3D_FILE), check the hash against it.
-  const f = process.env.SUPAREACH_FG3D_FILE;
+  // If a copy of the library is available locally (TRACEGRID_FG3D_FILE), check the hash against it.
+  const f = process.env.TRACEGRID_FG3D_FILE;
   if (f && fs.existsSync(f)) assert.equal(FG3D.integrity, 'sha384-' + crypto.createHash('sha384').update(fs.readFileSync(f)).digest('base64'));
 });
 
 test('graph.html from the demo: findings carry tiers and the page lists Fix first', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-html-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-html-'));
   const r = spawnSync(process.execPath, [bin, '--demo', '--out', tmp], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const h = fs.readFileSync(path.join(tmp, 'graph.html'), 'utf8');
@@ -85,10 +85,10 @@ test('graph.html from the demo: findings carry tiers and the page lists Fix firs
 });
 
 test('graph.html: dashboard by default, arrowed and labelled edges, and the look in one THEME block', () => {
-  const h = renderHtml(hostile(), { baseline: { file: 'supareach.baseline.json', fresh: ['r:a'], fixed: ['r:b', 'r:c'] } });
+  const h = renderHtml(hostile(), { baseline: { file: 'tracegrid.baseline.json', fresh: ['r:a'], fixed: ['r:b', 'r:c'] } });
   const { json, code } = scripts(h);
   const d = JSON.parse(json);
-  assert.deepEqual(d.baseline, { file: 'supareach.baseline.json', fresh: 1, fixed: 2 });
+  assert.deepEqual(d.baseline, { file: 'tracegrid.baseline.json', fresh: 1, fixed: 2 });
   assert.equal(typeof d.coverage.partial, 'number');
   assert.match(h, /data-view="dash" class="on">Dashboard/);
   assert.match(h, /<marker id="ar"[^>]*orient="auto"/);
