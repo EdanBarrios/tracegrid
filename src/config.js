@@ -12,10 +12,21 @@ import { isInside, realOr } from './safe.js';
 
 /** @type {Config} */
 export const DEFAULTS = {
-  include: ['src/**/*.{ts,tsx,js,jsx,mjs,cjs}', 'supabase/functions/**/*.{ts,tsx,js,jsx,mjs}'],
-  exclude: ['**/node_modules/**', '**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/*.d.ts', '**/dist/**', '**/build/**'],
-  migrations: 'supabase/migrations',
-  functionsDir: 'supabase/functions',
+  // Code to scan. The default is the whole project; dot-directories (.next, .svelte-kit, .nuxt,
+  // .output, .expo, .git ...) and node_modules are never walked.
+  include: ['**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro}'],
+  // Tests, mocks and stories are not callers: a function only a test calls is still dead in production.
+  exclude: ['**/*.{test,spec}.{ts,tsx,js,jsx,mjs,cjs,mts,cts}', '**/__tests__/**', '**/__mocks__/**', '**/*.stories.{ts,tsx,js,jsx,mjs,mts,svelte,vue}',
+    '**/*.d.ts', '**/*.d.mts', '**/*.d.cts'],
+  // Directory names skipped when they sit at the project root or next to a package.json (build
+  // output and native projects). The same names deeper in source (src/features/build/) are scanned.
+  outputDirs: ['dist', 'build', 'out', 'ios', 'android', 'coverage', 'storybook-static'],
+  // The Supabase project directory (the one holding config.toml, migrations/ and functions/).
+  // Auto-detected: the only **/supabase/config.toml (or **/supabase/migrations) in the project.
+  supabaseDir: null,
+  // Override migrations / functions directories (default: <supabaseDir>/migrations, <supabaseDir>/functions).
+  migrations: null,
+  functionsDir: null,
   // Names of your own helper functions that take an RPC / table / edge function name
   // as their first argument, e.g. a local `rpc('name')` wrapper.
   wrappers: { rpc: [], from: [], invoke: [] },
@@ -62,7 +73,7 @@ export function validatePaths(c, root, file = 'config') {
       if (path.isAbsolute(g) || /^[A-Za-z]:/.test(g) || g.split('/').includes('..')) bad(`${k}: "${g}" points outside the project (no absolute paths or "..")`);
     }
   }
-  for (const k of ['migrations', 'functionsDir']) {
+  for (const k of ['supabaseDir', 'migrations', 'functionsDir']) {
     if (c[k] == null) continue;
     if (typeof c[k] !== 'string' || !c[k]) bad(`${k} must be a path relative to the project`);
     if (path.isAbsolute(c[k]) || !isInside(root, path.resolve(root, c[k]))) bad(`${k}: "${c[k]}" is outside the project root (".." and absolute paths are not allowed)`);
@@ -126,7 +137,8 @@ function globBase(glob) {
  * List files under root matching include globs and not matching exclude globs. Symbolic links are
  * followed only when their target is inside the project root; nothing outside the root is read.
  */
-export function findFiles(root, include, exclude) {
+export function findFiles(root, include, exclude, { outputDirs = [] } = {}) {
+  const outNames = new Set(outputDirs);
   const inc = include.map(globToRegExp);
   const exc = exclude.map(globToRegExp);
   const realRoot = realOr(root);
@@ -149,8 +161,9 @@ export function findFiles(root, include, exclude) {
       let entries;
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
       for (const e of entries) {
-        if (e.name === 'node_modules' || e.name === '.git') continue;
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
         const full = path.join(dir, e.name);
+        if (outNames.has(e.name) && (dir === root || fs.existsSync(path.join(dir, 'package.json')))) continue;
         if (e.isSymbolicLink()) {
           if (!isInside(realRoot, full)) continue; // link target outside the project: never followed
           let t;

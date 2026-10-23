@@ -121,8 +121,12 @@ const short = (s) => s.replace(/\s+/g, ' ').slice(0, 80);
  * @returns {{ calls: CallSite[], unresolved: Unresolved[] }}
  */
 export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [] }) {
+  const sfc = /\.(vue|svelte|astro)$/.test(file);
+  if (sfc) text = extractScripts(text, file);
   const kind = /\.(tsx|jsx)$/.test(file) ? ts.ScriptKind.TSX : /\.(js|mjs|cjs)$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
-  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+  const sf = ts.createSourceFile(sfc ? file + '.ts' : file, text, ts.ScriptTarget.Latest, true, kind);
+  const diags = sf.parseDiagnostics || [];
+  const parseErrors = diags.slice(0, 3).map((d) => ({ line: sf.getLineAndCharacterOfPosition(d.start || 0).line + 1, message: ts.flattenDiagnosticMessageText(d.messageText, ' ') }));
   const consts = constStrings(sf);
   /** @type {CallSite[]} */ const calls = [];
   /** @type {Unresolved[]} */ const unresolved = [];
@@ -268,7 +272,46 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
     if (!subjects.length) { invalid.push({ file, line: h.line, error: 'ignore: no Supabase call on this or the next line' }); continue; }
     for (const subject of subjects) suppress.push({ rule: h.rule, subject, reason: h.reason, at: `${file}:${h.line}` });
   }
-  return { calls, unresolved, hatches: { suppress, invalid, raw: hatches } };
+  return { calls, unresolved, hatches: { suppress, invalid, raw: hatches }, parseErrors, parseErrorCount: diags.length };
+}
+
+/**
+ * Keep only the script parts of a .vue / .svelte / .astro file, blanking everything else with spaces
+ * (newlines kept), so offsets and line numbers still match the original file.
+ */
+export function extractScripts(text, file) {
+  const keep = [];
+  if (/\.astro$/.test(file)) {
+    const fm = /^(\s*---[^\S\n]*\n)([\s\S]*?)\n---[^\S\n]*(\n|$)/.exec(text);
+    if (fm) keep.push([fm[1].length, fm[1].length + fm[2].length]);
+  }
+  const re = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const start = m.index + m[0].indexOf('>') + 1;
+    keep.push([start, start + m[1].length]);
+  }
+  const out = [];
+  let pos = 0;
+  const blank = (a, b) => out.push(text.slice(a, b).replace(/[^\n]/g, ' '));
+  for (const [a, b] of keep.sort((x, y) => x[0] - y[0])) {
+    if (a < pos) continue;
+    blank(pos, a);
+    out.push(text.slice(a, b));
+    pos = b;
+  }
+  blank(pos, text.length);
+  return out.join('');
+}
+
+/** Decode a source buffer: UTF-8 (BOM stripped), UTF-16 with a BOM; null for binary. */
+export function decodeSource(buf) {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
+  if (buf[0] === 0xfe && buf[1] === 0xff) { const b = Buffer.from(buf.subarray(2, buf.length - (buf.length % 2))); return b.swap16().toString('utf16le'); }
+  let text = buf.toString('utf8');
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  if (text.includes('\u0000')) return null;
+  return text;
 }
 
 /** Scan a list of files relative to root. */
@@ -277,17 +320,23 @@ export function scanFiles(root, files, wrappers) {
   const unresolved = [];
   const failed = [];
   const hatches = { suppress: [], invalid: [], byFile: new Map() };
+  const parseErrors = [];
+  const add = (to, from) => { for (const x of from) to.push(x); }; // no push(...spread): it overflows the stack on huge files
   for (const f of files) {
     let text;
-    try { text = fs.readFileSync(path.join(root, f), 'utf8'); } catch (e) { failed.push({ file: f, error: String(e.message) }); continue; }
+    try {
+      text = decodeSource(fs.readFileSync(path.join(root, f)));
+      if (text == null) { failed.push({ file: f, error: 'binary or UTF-16 without a byte order mark; not scanned' }); continue; }
+    } catch (e) { failed.push({ file: f, error: String(e.message) }); continue; }
     try {
       const r = scanSource(text, f, wrappers);
-      calls.push(...r.calls);
-      unresolved.push(...r.unresolved);
-      hatches.suppress.push(...r.hatches.suppress);
-      hatches.invalid.push(...r.hatches.invalid);
+      add(calls, r.calls);
+      add(unresolved, r.unresolved);
+      add(hatches.suppress, r.hatches.suppress);
+      add(hatches.invalid, r.hatches.invalid);
       if (r.hatches.raw.length) hatches.byFile.set(f, r.hatches.raw);
+      if (r.parseErrorCount) parseErrors.push({ file: f, line: r.parseErrors[0].line, error: `${r.parseErrorCount} syntax error(s), first: ${r.parseErrors[0].message}; calls after the error may be missed` });
     } catch (e) { failed.push({ file: f, error: String(e.message) }); }
   }
-  return { calls, unresolved, failed, hatches };
+  return { calls, unresolved, failed, parseErrors, hatches };
 }

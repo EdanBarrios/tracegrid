@@ -15,6 +15,17 @@ const exposed = (config) => new Set(config.exposedSchemas || ['public']);
 /** Functions in an exposed schema that anon or authenticated can execute. */
 const grantedFunctions = (graph, config) => graph.nodes.filter((n) => n.type === 'function' && !n.missing && n.kind === 'function'
   && !n.triggerOnly && exposed(config).has(n.schema || 'public') && (n.anon || n.authenticated));
+/**
+ * Unresolved (dynamic-name) call sites of a kind that could reach `name`. A site with a known
+ * name pattern (`fn_${x}`) only counts for names matching it.
+ */
+const couldReach = (unresolved = [], kind, name) => unresolved.filter((u) => u.kind === kind && (!u.pattern || new RegExp(u.pattern).test(name)));
+/** Downgrade a "nothing calls" error to a warning, with an explanation, when dynamic call sites could reach it. */
+function caveat(f, sites, what) {
+  if (!sites.length) return f;
+  const first = sites[0];
+  return { ...f, level: f.level === 'note' ? 'note' : 'warning', note: `${sites.length} unresolved ${what} call site(s) with a dynamic name could reach it (first: ${first.file}:${first.line}); check them before revoking` };
+}
 const fnFinding = (n, extra = {}) => ({ id: n.id.slice(3), node: n.id, at: n.at, roles: ['anon', 'authenticated'].filter((r) => n[r]), securityDefiner: n.securityDefiner, ...extra });
 
 export const coreRules = [
@@ -23,8 +34,9 @@ export const coreRules = [
     level: 'error',
     title: 'Functions callable by anon/authenticated that nothing calls',
     why: 'No `.rpc()` in code, and no cron job, trigger, policy, view or other SQL function references them. Each is surface any signed-in (or anonymous) user can call through the Data API. Revoke the grant, or ignore it with a reason if a caller is coming.',
-    run({ graph, config }) {
-      return grantedFunctions(graph, config).filter((n) => callers(graph, n.id).length === 0).map((n) => fnFinding(n));
+    run({ graph, config, unresolved }) {
+      return grantedFunctions(graph, config).filter((n) => callers(graph, n.id).length === 0)
+        .map((n) => caveat(fnFinding(n), couldReach(unresolved, 'rpc', n.label.split('.').pop()), '.rpc()'));
     },
   },
   {
@@ -90,9 +102,9 @@ export const coreRules = [
     level: 'warning',
     title: 'Edge functions with no caller',
     why: 'No `functions.invoke`, no `/functions/v1/<name>` URL in code, cron or SQL, and not declared as an external entry point. Webhooks, OAuth callbacks and auth hooks are legitimately uncalled: declare them in `entryPoints` or with a `// supareach: entry-point <reason>` hatch. `verify_jwt = false` functions are treated as entry points automatically (`autoEntryPoints`).',
-    run({ graph }) {
+    run({ graph, unresolved }) {
       return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && callers(graph, n.id).length === 0)
-        .map((n) => ({ id: n.label, node: n.id, at: n.at, note: n.verifyJwt === false ? 'verify_jwt=false (autoEntryPoints is off)' : undefined }));
+        .map((n) => caveat({ id: n.label, node: n.id, at: n.at, note: n.verifyJwt === false ? 'verify_jwt=false (autoEntryPoints is off)' : undefined }, couldReach(unresolved, 'invoke', n.label), 'functions.invoke / URL'));
     },
   },
   {

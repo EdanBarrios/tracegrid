@@ -189,7 +189,9 @@ test('unparsed statements touching grants or policies are flagged risky and rais
   const st = scanMigrations(path.join(tmp, 'supabase/migrations'));
   assert.deepEqual(st.unparsed.map((u) => u.risky), [true, false]);
   const r = await analyze(tmp);
-  assert.equal(r.warnings.length, 1);
-  assert.match(r.warnings[0], /1 migration statement\(s\)[\s\S]*--db-url/);
+  const w = r.warnings.filter((x) => /migration statement/.test(x));
+  assert.equal(w.length, 1);
+  assert.match(w[0], /1 migration statement\(s\)[\s\S]*--db-url/);
+  assert.ok(r.warnings.some((x) => /0 code files/.test(x)), 'no code at all is a loud warning');
   fs.rmSync(tmp, { recursive: true, force: true });
 });

@@ -22,6 +22,9 @@ export function location(at, prefix = '') {
   return { file: prefix ? `${prefix.replace(/\/+$/, '')}/${file}` : file, line: m ? Number(m[2]) : 1 };
 }
 
+/** Relative path -> URI reference (each segment percent-encoded). */
+export const uriOf = (p) => p.split('/').map(encodeURIComponent).join('/');
+
 /**
  * SARIF 2.1.0. Findings without a file location (objects that exist only in the database) point at
  * `fallbackUri`, line 1, since code scanning wants a location for every result.
@@ -50,6 +53,16 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
         },
       },
       automationDetails: { id: `supareach/${r.source}/` },
+      invocations: [{
+        executionSuccessful: !(r.scope_problems || []).length,
+        toolExecutionNotifications: [
+          ...(r.scope_problems || []).map((t) => ({ level: 'error', message: { text: t } })),
+          ...[...((r.info && r.info.unreadable_files) || []), ...((r.info && r.info.parse_errors) || [])].map((f) => ({
+            level: 'warning', message: { text: `${f.file}: ${f.error}` },
+            locations: [{ physicalLocation: { artifactLocation: { uri: uriOf(prefix ? `${prefix}/${f.file}` : f.file), uriBaseId: '%SRCROOT%' }, ...(f.line ? { region: { startLine: f.line } } : {}) } }],
+          })),
+        ],
+      }],
       results: r.findings.map((f) => {
         const loc = location(f.at, prefix) || { file: prefix ? `${prefix}/${fallbackUri}` : fallbackUri, line: 1 };
         return {
@@ -57,7 +70,7 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
           ruleIndex: ruleIndex.get(f.rule),
           level: f.level,
           message: { text: describe(f, byId.get(f.rule)) + (f.at && /^db:/.test(f.at) ? ` [${f.at}]` : '') },
-          locations: [{ physicalLocation: { artifactLocation: { uri: loc.file, uriBaseId: '%SRCROOT%' }, region: { startLine: loc.line } } }],
+          locations: [{ physicalLocation: { artifactLocation: { uri: uriOf(loc.file), uriBaseId: '%SRCROOT%' }, region: { startLine: loc.line } } }],
           partialFingerprints: { 'supareach/v1': f.fingerprint },
           properties: { source: f.source },
         };

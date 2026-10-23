@@ -102,9 +102,13 @@ async function main() {
   }
 
   const s = r.stats;
-  console.log(`${s.files_scanned} files, ${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
+  const pj = r.project;
+  say(`Supabase project: ${pj.supabaseDir} (${pj.how}${pj.configToml ? '' : ', no config.toml'}); migrations ${pj.migrations}, functions ${pj.functionsDir}`);
+  const roots = pj.codeRoots.slice(0, 8).map((x) => `${x.dir === '.' ? '(root)' : x.dir + '/'} ${x.files}`).join(', ');
+  say(`Code: ${s.files_scanned} files${roots ? ` (${roots}${pj.codeRoots.length > 8 ? ', ...' : ''})` : ''}`);
+  say(`${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
-  for (const rule of r.rules) console.log(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
+  for (const rule of r.rules) say(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
   if (r.suppressed.length) console.log(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);
   for (const w of r.warnings) warn(`warning: ${w}`);
   for (const h of r.info.invalid_hatches) warn(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
@@ -131,6 +135,10 @@ async function main() {
       warn(`--update-baseline refused: it would add ${res.added.length} finding(s) to the baseline:`, ...res.added.map((x) => `  ${x}`), 'Fix them, ignore them with a reason, or rerun with --force.');
       code = 1;
     } else say(`Baseline written to ${baselinePath} (${res.total} finding(s); ${res.added.length} added, ${res.removed.length} removed)`);
+  }
+  if (args.check && r.scope_problems.length) {
+    warn(`check: refusing to pass: ${r.scope_problems.length} scope problem(s) above make the result empty, not clean.`);
+    return 2;
   }
   if (args.check) {
     if (!fs.existsSync(baselinePath)) fail(`--check: no baseline at ${baselinePath}. Run with --update-baseline first.`);

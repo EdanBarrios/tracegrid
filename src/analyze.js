@@ -6,6 +6,7 @@ import { scanMigrations, sqlRefs } from './scan-sql.js';
 import { fromMigrations, schemaOf } from './catalog.js';
 import { readCatalog, fromDb } from './db.js';
 import { listEdgeFunctions } from './edge-functions.js';
+import { resolveProject } from './supabase-project.js';
 import { coreRules } from './rules/core.js';
 import { loadPlugins, runRules, makeGraph, RuleError } from './engine.js';
 
@@ -51,15 +52,16 @@ export async function analyze(root, opts = {}) {
       plugins = [];
     } else plugins = await loadPlugins(cfg._dir || root, listed, { root });
   }
-  const files = findFiles(root, cfg.include, cfg.exclude);
+  const project = resolveProject(root, cfg);
+  const files = findFiles(root, cfg.include, cfg.exclude, { outputDirs: cfg.outputDirs || [] });
   const code = scanFiles(root, files, cfg.wrappers);
-  const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants, relDir: cfg.migrations, root });
+  const sql = scanMigrations(path.join(root, project.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants, relDir: project.migrations, root });
   const replayed = fromMigrations(sql);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
   const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec, root } : { root }), replayed) : replayed;
-  const edgeFns = listEdgeFunctions(root, cfg.functionsDir);
+  const edgeFns = listEdgeFunctions(root, project.functionsDir, project.toml, project.supabaseDir);
   const edgeNames = new Set(edgeFns.map((e) => e.name));
-  const fnPrefix = cfg.functionsDir.replace(/\/$/, '') + '/';
+  const fnPrefix = project.functionsDir.replace(/\/$/, '') + '/';
 
   /** Which graph node a code file belongs to. */
   const callerOf = (file) => {
@@ -120,7 +122,7 @@ export async function analyze(root, opts = {}) {
     }
   }
   if (cfg.autoEntryPoints) {
-    for (const e of edgeFns) if (e.verifyJwt === false) entries.push({ name: e.name, reason: 'verify_jwt = false in supabase/config.toml: assumed to be called from outside (webhook, callback, health check)', source: 'supabase/config.toml', confidence: 'inferred' });
+    for (const e of edgeFns) if (e.verifyJwt === false) entries.push({ name: e.name, reason: `verify_jwt = false in ${project.configToml}: assumed to be called from outside (webhook, callback, health check)`, source: project.configToml, confidence: 'inferred' });
   }
   const entryByName = new Map();
   for (const ep of entries) if (!entryByName.has(ep.name)) entryByName.set(ep.name, ep);
@@ -191,13 +193,15 @@ export async function analyze(root, opts = {}) {
   // Findings
   const graph = makeGraph([...nodes.values()], [...edges.values()]);
   const suppress = makeSuppressor(cfg, [...code.hatches.suppress, ...sql.hatches.suppress]);
-  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root }, suppress);
+  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root, unresolved: code.unresolved }, suppress);
 
   const info = {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),
     unresolved_dynamic_calls: code.unresolved,
     unparsed_sql: catalog.source === 'migrations' ? catalog.unparsed : [],
     unreadable_files: code.failed,
+    parse_errors: code.parseErrors,
+    skipped_migrations: sql.skipped,
     external_entry_points: [...entryByName.values()].map(({ name, reason, source }) => ({ id: name, reason, source })),
     invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid, ...entryInvalid],
   };
@@ -210,6 +214,16 @@ export async function analyze(root, opts = {}) {
       + `(first: ${risky[0].file}:${risky[0].line}). Findings that depend on grants and policies may be wrong; `
       + 'run with --db-url against a database built from these migrations to use the real catalog.');
   }
+
+  // Loud failures: an empty side of the analysis makes every "nothing calls" finding meaningless.
+  const scope_problems = [];
+  if (!files.length) scope_problems.push(`0 code files matched \`include\` (${cfg.include.join(', ')}); every "nothing calls" finding is meaningless. Set "include" in supareach.config.json.`);
+  else if (!code.calls.length && !code.unresolved.length) scope_problems.push(`${files.length} code files scanned but 0 Supabase call sites found; check "include" and that the code uses supabase-js.`);
+  if (catalog.source === 'migrations' && !catalog.stats.migrations) scope_problems.push(`0 migrations found in ${project.migrations}; the schema side is empty. Set "supabaseDir" or "migrations", or use --db-url.`);
+  warnings.unshift(...scope_problems);
+  const failedFiles = [...code.failed, ...code.parseErrors];
+  if (failedFiles.length) warnings.push(`${failedFiles.length} code file(s) could not be parsed completely (first: ${failedFiles[0].file}: ${failedFiles[0].error}); calls in them may be missing.`);
+  if (sql.skipped.length) warnings.push(`${sql.skipped.length} file(s) in ${project.migrations} skipped (first: ${sql.skipped[0].file}: ${sql.skipped[0].reason}).`);
 
   const stats = {
     files_scanned: files.length,
@@ -232,6 +246,8 @@ export async function analyze(root, opts = {}) {
     generated_at: new Date().toISOString(),
     root: path.basename(root),
     source: catalog.source,
+    project: { supabaseDir: project.supabaseDir, how: project.how, migrations: project.migrations, functionsDir: project.functionsDir, configToml: project.toml ? project.configToml : null, codeRoots: codeRoots(files) },
+    scope_problems,
     ...(catalog.meta ? { database: catalog.meta } : {}),
     warnings,
     stats,
@@ -247,6 +263,13 @@ export async function analyze(root, opts = {}) {
     nodes: [...nodes.values()],
     links: [...edges.values()],
   };
+}
+
+/** Top-level directories the scanned files live in, with counts: [{ dir, files }]. */
+function codeRoots(files) {
+  const m = new Map();
+  for (const f of files) { const i = f.indexOf('/'); const d = i < 0 ? '.' : f.slice(0, i); m.set(d, (m.get(d) || 0) + 1); }
+  return [...m].sort((a, b) => b[1] - a[1]).map(([dir, n]) => ({ dir, files: n }));
 }
 
 function distinct(calls, kind, callerOf, side) {

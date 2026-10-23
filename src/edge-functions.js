@@ -1,32 +1,41 @@
-// Inventory of supabase/functions/* and their verify_jwt setting from supabase/config.toml.
+// Inventory of <supabaseDir>/functions/* with verify_jwt and entrypoint from config.toml.
 import fs from 'node:fs';
 import path from 'node:path';
+import { isInside } from './safe.js';
 
-/** @returns {{ name: string, dir: string, verifyJwt: boolean|null }[]} */
-export function listEdgeFunctions(root, functionsDir) {
+const INDEX = /^index\.(ts|tsx|js|jsx|mjs|mts)$/;
+
+/**
+ * @param {string} root @param {string} functionsDir relative to root
+ * @param {object|null} toml parsed config.toml @param {string} supabaseDir relative to root
+ * @returns {{ name: string, dir: string, entry: string, verifyJwt: boolean|null }[]}
+ */
+export function listEdgeFunctions(root, functionsDir, toml = null, supabaseDir = 'supabase') {
+  const conf = (toml && toml.functions) || {};
   const dir = path.join(root, functionsDir);
-  if (!fs.existsSync(dir)) return [];
-  const jwt = readVerifyJwt(root);
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.name.startsWith('_') && !e.name.startsWith('.') && e.name !== 'node_modules')
-    .map((e) => ({ e, index: fs.readdirSync(path.join(dir, e.name)).find((f) => /^index\.(ts|js|tsx|mjs)$/.test(f)) }))
-    .filter((x) => x.index)
-    .map(({ e, index }) => ({ name: e.name, dir: `${functionsDir}/${e.name}`, entry: `${functionsDir}/${e.name}/${index}`, verifyJwt: jwt.has(e.name) ? jwt.get(e.name) : null }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** Minimal TOML read: [functions.<name>] verify_jwt = true|false. */
-function readVerifyJwt(root) {
-  const m = new Map();
-  const p = path.join(root, 'supabase', 'config.toml');
-  if (!fs.existsSync(p)) return m;
-  let cur = null;
-  for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
-    const sec = /^\s*\[functions\.("?)([^"\]]+)\1\]\s*$/.exec(line);
-    if (sec) { cur = sec[2]; continue; }
-    if (/^\s*\[/.test(line)) { cur = null; continue; }
-    const v = /^\s*verify_jwt\s*=\s*(true|false)/.exec(line);
-    if (cur && v) m.set(cur, v[1] === 'true');
+  const out = new Map();
+  const names = new Set(Object.keys(conf));
+  if (fs.existsSync(dir)) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if ((e.isDirectory() || e.isSymbolicLink()) && !e.name.startsWith('_') && !e.name.startsWith('.') && e.name !== 'node_modules') names.add(e.name);
+    }
   }
-  return m;
+  for (const name of names) {
+    const c = conf[name] || {};
+    let entry = null;
+    if (typeof c.entrypoint === 'string') {
+      const p = path.join(root, supabaseDir, c.entrypoint);
+      if (isInside(root, p) && fs.existsSync(p)) entry = path.relative(root, p).split(path.sep).join('/');
+    }
+    if (!entry) {
+      const d = path.join(dir, name);
+      let files = [];
+      try { if (isInside(root, d)) files = fs.readdirSync(d); } catch { /* not a directory */ }
+      const idx = files.find((f) => INDEX.test(f));
+      if (idx) entry = `${functionsDir}/${name}/${idx}`;
+    }
+    if (!entry) continue;
+    out.set(name, { name, dir: `${functionsDir}/${name}`, entry, verifyJwt: typeof c.verify_jwt === 'boolean' ? c.verify_jwt : null });
+  }
+  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
