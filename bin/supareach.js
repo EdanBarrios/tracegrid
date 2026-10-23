@@ -28,7 +28,9 @@ Options:
   --db-url <url>       Read the schema from a live database (postgres:// URL) instead of
                        replaying migrations. Runs psql in a read-only transaction; use a
                        read-only role. Also read from SUPAREACH_DB_URL.
-  --check              Exit 1 if any error/warning finding is not in the baseline
+  --check              Exit 1 if any new Fix-tier finding is not in the baseline
+  --check-level <t>    What --check gates: fix (default) or review (fix + review).
+                       Info findings never gate
   --update-baseline    Write current findings to the baseline (only removes entries
                        from an existing baseline unless --force)
   --force              Let --update-baseline add new entries
@@ -61,6 +63,7 @@ function parseArgs(argv) {
     else if (x === '--baseline') a.baseline = need(++i, x);
     else if (x === '--db-url') a.dbUrl = need(++i, x);
     else if (x === '--check') a.check = true;
+    else if (x === '--check-level') { a.checkLevel = need(++i, x); if (!['fix', 'review'].includes(a.checkLevel)) fail(`--check-level must be fix or review (got ${oneLine(a.checkLevel)})`); }
     else if (x === '--sarif') a.sarif = need(++i, x);
     else if (x === '--github') a.github = true;
     else if (x === '--update-baseline') a.update = true;
@@ -127,13 +130,26 @@ async function main() {
   say(`Code: ${s.files_scanned} files${roots ? ` (${roots}${pj.codeRoots.length > 8 ? ', ...' : ''})` : ''}`);
   say(`${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
-  for (const rule of r.rules) say(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
+  // Per rule: the count, split by the level each finding actually has (a rule's findings can be
+  // downgraded, e.g. errors to warnings when dynamic calls could reach them).
+  for (const rule of r.rules) {
+    const mine = r.findings.filter((f) => f.rule === rule.id);
+    const byLevel = ['error', 'warning', 'note'].map((l) => [l, mine.filter((f) => f.level === l).length]).filter(([, n]) => n);
+    say(`  ${rule.id.padEnd(w)} ${String(mine.length).padStart(4)}  ${byLevel.length ? byLevel.map(([l, n]) => (byLevel.length > 1 ? `${n} ${l}` : l)).join(', ') : '-'}`);
+  }
   if (r.suppressed.length) say(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);
-  const ORDER = { error: 0, warning: 1, note: 2 };
-  const top = [...r.findings].sort((a, b) => ORDER[a.level] - ORDER[b.level]);
+  const t = r.tiers;
+  say('', `Fix ${t.fix}  ·  Review ${t.review}  ·  Info ${t.info}`);
+  const RANK = { fix: 0, review: 1, info: 2 };
+  const LRANK = { error: 0, warning: 1, note: 2 };
+  const top = [...r.findings].filter((f) => f.tier !== 'info').sort((a, b) => RANK[a.tier] - RANK[b.tier] || LRANK[a.level] - LRANK[b.level]);
   if (top.length) {
-    say('', 'Top findings:');
-    for (const f of top.slice(0, 10)) say(`  ${f.level.padEnd(7)} ${f.rule}  ${f.id}${f.at ? `  ${f.at}` : ''}${f.note ? `  (${f.note})` : ''}`);
+    say('', top[0].tier === 'fix' ? 'Fix first:' : 'Nothing in Fix. Review:');
+    let tier = top[0].tier;
+    for (const f of top.slice(0, 10)) {
+      if (f.tier !== tier) { tier = f.tier; say('Review:'); }
+      say(`  ${f.rule}  ${f.id}${f.at ? `  ${f.at}` : ''}${f.note ? `  (${f.note})` : ''}`);
+    }
     if (top.length > 10) say(`  ... and ${top.length - 10} more in report.md`);
   }
   for (const n of r.notices || []) say(`note: ${n}`);
@@ -170,18 +186,19 @@ async function main() {
   if (args.check) {
     let known = new Set();
     if (fs.existsSync(baselinePath)) known = readBaseline(baselinePath);
-    else warn(`check: no baseline at ${baselinePath}, so every error and warning counts as new. To accept today's findings and fail only on new ones: supareach --update-baseline, then commit supareach.baseline.json.`);
-    const c = compareBaseline(known, r);
+    else warn(`check: no baseline at ${baselinePath}, so every ${args.checkLevel === 'review' ? 'Fix and Review' : 'Fix'} finding counts as new. To accept today's findings and fail only on new ones: supareach --update-baseline, then commit supareach.baseline.json.`);
+    const c = compareBaseline(known, r, args.checkLevel || 'fix');
     fresh = c.fresh;
-    for (const f of c.fresh) warn(`NEW ${f.level} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
+    for (const f of c.fresh) warn(`NEW ${f.tier} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
     if (c.fixed.length) say(`${c.fixed.length} baselined finding(s) no longer present (run --update-baseline to lock that in):`, ...c.fixed.map((x) => `  ${x}`));
-    if (c.fresh.length) { console.error(`check: ${c.fresh.length} new finding(s) not in the baseline`); code = 1; }
-    else console.log('check: no new findings');
+    const gate = args.checkLevel === 'review' ? 'Fix/Review' : 'Fix';
+    if (c.fresh.length) { console.error(`check: ${c.fresh.length} new ${gate} finding(s) not in the baseline`); code = 1; }
+    else console.log(`check: no new ${gate} findings`);
   }
   if (!args.check && !args.update) say('', 'Not gating: findings do not change the exit code. Use --check (with a baseline from --update-baseline) in CI.');
   if (args.github) {
     const prefix = prefixFrom(process.env.GITHUB_WORKSPACE || process.cwd());
-    for (const line of githubAnnotations(fresh || r.findings, r.rules, prefix)) console.log(line);
+    for (const line of githubAnnotations(fresh || r.findings, r.rules, prefix, r.sarifLevels)) console.log(line);
     if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, stepSummary(r, fresh));
   }
   return code;

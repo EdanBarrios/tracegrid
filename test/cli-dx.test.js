@@ -34,7 +34,8 @@ test('--demo works from any directory and prints top findings with file:line', (
   const r = run(['--demo', '--no-output'], { cwd: d });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Supabase project: supabase \(auto-detected\)/);
-  assert.match(r.stdout, /Top findings:\n {2}error {3}\S+ {2}\S+ {2}\S+:\d+/);
+  assert.match(r.stdout, /Fix \d+ {2}· {2}Review \d+ {2}· {2}Info \d+/);
+  assert.match(r.stdout, /Fix first:\n {2}\S+ {2}\S+ {2}\S+:\d+/);
   assert.match(r.stdout, /Not gating/);
   rm(d);
 });

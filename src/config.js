@@ -51,6 +51,8 @@ export const DEFAULTS = {
   // Every ignore needs a reason: { "name": "...", "reason": "..." }; `findings` takes a full
   // fingerprint ("<rule>:<subject>") and works for any rule, plugins included.
   ignore: { functions: [], edgeFunctions: [], tables: [], rpcs: [], findings: [] },
+  // SARIF result level per tier (code scanning shows error / warning / note).
+  sarifLevels: { fix: 'error', review: 'warning', info: 'note' },
   // Extra rule modules (paths relative to the config file). Each exports `rules`: see src/engine.js.
   plugins: [],
 };
@@ -74,7 +76,7 @@ export function loadConfig(root, file) {
       else c._warnings.push(`unknown config key "${k}" (ignored)`);
       continue;
     }
-    if ((k === 'ignore' || k === 'wrappers') && user[k] && typeof user[k] === 'object') c[k] = { ...c[k], ...user[k] };
+    if ((k === 'ignore' || k === 'wrappers' || k === 'sarifLevels') && user[k] && typeof user[k] === 'object') c[k] = { ...c[k], ...user[k] };
     else c[k] = user[k];
   }
   validateConfig(c, p);
@@ -116,6 +118,10 @@ export function validateConfig(c, file = 'config') {
   }
   if (!Array.isArray(c.plugins)) bad('plugins must be an array of paths');
   if (![null, 'auto', true, false, 'legacy', 'opt-in'].includes(c.supabaseDefaultGrants)) bad('supabaseDefaultGrants must be "auto", "legacy", "opt-in", true or false');
+  for (const [t, l] of Object.entries(c.sarifLevels || {})) {
+    if (!['fix', 'review', 'info'].includes(t)) bad(`sarifLevels.${t}: unknown tier (expected fix, review, info)`);
+    if (!['error', 'warning', 'note', 'none'].includes(l)) bad(`sarifLevels.${t} must be "error", "warning", "note" or "none"`);
+  }
   if (!Array.isArray(c.entryPoints)) bad('entryPoints must be an array');
   c.entryPoints.forEach((x, i) => {
     if (typeof x === 'string') bad(`entryPoints[${i}] is a bare string; write { "name": ${JSON.stringify(x)}, "reason": "who calls it" }`);

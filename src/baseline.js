@@ -4,8 +4,14 @@
 import fs from 'node:fs';
 import { SCHEMA_VERSION } from './analyze.js';
 
-/** Findings that gate: errors and warnings. Notes are informational. */
-export const gated = (r) => r.findings.filter((f) => f.level !== 'note');
+/** Tiers that gate at each --check-level. Info never gates. */
+export const CHECK_LEVELS = { fix: ['fix'], review: ['fix', 'review'] };
+
+/**
+ * Findings that gate at `level` (default here: fix and review). The baseline itself always stores fix and review
+ * findings, so switching --check-level later does not turn accepted findings into new ones.
+ */
+export const gated = (r, level = 'review') => r.findings.filter((f) => (CHECK_LEVELS[level] || CHECK_LEVELS.fix).includes(f.tier || 'review'));
 
 export class BaselineError extends Error {}
 
@@ -16,12 +22,12 @@ export function readBaseline(file) {
   return new Set(b.findings);
 }
 
-export function compareBaseline(known, r) {
-  const now = gated(r);
-  const nowSet = new Set(now.map((f) => f.fingerprint));
+export function compareBaseline(known, r, level = 'fix') {
+  const now = gated(r, level);
+  const nowAll = new Set(gated(r, 'review').map((f) => f.fingerprint));
   return {
     fresh: now.filter((f) => !known.has(f.fingerprint)),
-    fixed: [...known].filter((fp) => !nowSet.has(fp)).sort(),
+    fixed: [...known].filter((fp) => !nowAll.has(fp)).sort(),
   };
 }
 

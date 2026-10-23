@@ -1,14 +1,30 @@
 // Rule contract and runner. Core rules and plugin rules go through the same path.
 //
-// A rule is { id, level, title, why, run({ graph, catalog, config, root }) => Finding[] }.
+// A rule is { id, level, tier?, title, why, run({ graph, catalog, config, root }) => Finding[] }.
 // A finding is { id, at?, node?, message?, ...extra }: `id` names the subject (a function, table,
-// edge function...) and must be stable across runs; the runner adds `rule`, `level` and
-// `fingerprint` (`<rule>:<id>`), which is what the baseline stores.
+// edge function...) and must be stable across runs; the runner adds `rule`, `level`, `tier` and
+// `fingerprint` (`<rule>:<id>`), which is what the baseline stores. The tier is never part of the
+// fingerprint, so a finding moving between tiers keeps its baseline entry.
+//
+// Tiers: `fix` (high confidence, act on it), `review` (same kinds of problem with a caveat: dynamic
+// calls, dynamic SQL, heuristics, or a functional rather than security problem), `info` (intended or
+// benign patterns). A finding may set `tier`; otherwise the rule's `tier`; otherwise it follows the
+// level (error -> fix, warning -> review, note -> info). A low-confidence finding is never `fix`.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isInside } from './safe.js';
 
 export const LEVELS = ['error', 'warning', 'note'];
+export const TIERS = ['fix', 'review', 'info'];
+const TIER_OF_LEVEL = { error: 'fix', warning: 'review', note: 'info' };
+
+/** The tier of a stamped finding. */
+export function tierOf(f, rule) {
+  let t = TIERS.includes(f.tier) ? f.tier : rule && TIERS.includes(rule.tier) ? rule.tier : TIER_OF_LEVEL[f.level] || 'review';
+  if (t === 'fix' && f.confidence === 'low') t = 'review';
+  if (t === 'fix' && f.level === 'note') t = 'info';
+  return t;
+}
 const RULE_ID = /^[a-z0-9][a-z0-9_.\/-]*$/;
 
 export class RuleError extends Error {}
@@ -19,6 +35,7 @@ export function validateRule(r, origin = 'rule') {
   if (!r || typeof r !== 'object') throw new RuleError(`${origin}: a rule must be an object`);
   if (typeof r.id !== 'string' || !RULE_ID.test(r.id)) throw new RuleError(`${where}: id must match ${RULE_ID}`);
   if (!LEVELS.includes(r.level)) throw new RuleError(`${where}: level must be one of ${LEVELS.join(', ')}`);
+  if (r.tier !== undefined && !TIERS.includes(r.tier)) throw new RuleError(`${where}: tier must be one of ${TIERS.join(', ')}`);
   for (const k of ['title', 'why']) if (typeof r[k] !== 'string' || !r[k].trim()) throw new RuleError(`${where}: ${k} must be a non-empty string`);
   if (typeof r.run !== 'function') throw new RuleError(`${where}: run must be a function`);
 }
@@ -74,15 +91,17 @@ export function runRules(rules, ctx, suppress = () => null) {
       ids.add(f.id);
       const out = { rule: r.id, level: f.level && LEVELS.includes(f.level) ? f.level : r.level, ...f, fingerprint: `${r.id}:${f.id}` };
       out.rule = r.id;
+      out.tier = tierOf(out, r);
       const why = suppress(out);
       if (why) suppressed.push({ ...out, suppressed: why });
       else findings.push(out);
     }
   }
   const order = (a, b) => (a.rule === b.rule ? a.id.localeCompare(b.id) : 0);
+  // Findings keep rule order (then subject); tier-first views sort on top of this.
   findings.sort(order);
   suppressed.sort(order);
-  return { findings, suppressed, rules: rules.map(({ id, level, title, why, plugin }) => ({ id, level, title, why, ...(plugin ? { plugin } : {}) })) };
+  return { findings, suppressed, rules: rules.map(({ id, level, tier, title, why, plugin }) => ({ id, level, tier: TIERS.includes(tier) ? tier : TIER_OF_LEVEL[level], title, why, ...(plugin ? { plugin } : {}) })) };
 }
 
 /**

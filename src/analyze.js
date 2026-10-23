@@ -8,7 +8,7 @@ import { readCatalog, fromDb } from './db.js';
 import { listEdgeFunctions } from './edge-functions.js';
 import { resolveProject } from './supabase-project.js';
 import { coreRules } from './rules/core.js';
-import { loadPlugins, runRules, makeGraph, RuleError } from './engine.js';
+import { loadPlugins, runRules, makeGraph, RuleError, TIERS } from './engine.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -120,7 +120,7 @@ export async function analyze(root, opts = {}) {
     node(`table:${t.name}`, 'table', t.name, {
       schema: t.schema, rls: t.rls, policies: t.policies.length, clientPolicies: permissive, defined: !t.external, at: t.at,
       ...(t.grants !== undefined ? { clientPrivs: clientPrivs(t.grants) } : {}),
-      ...(t.partition ? { partition: true } : {}), ...(t.rlsUncertain ? { rlsUncertain: t.rlsUncertain } : {}),
+      ...(t.partition ? { partition: true } : {}), ...(t.rlsUncertain ? { rlsUncertain: t.rlsUncertain } : {}), ...(t.grantsUncertain ? { grantsUncertain: t.grantsUncertain } : {}),
     });
   }
   const rlsTables = new Map(catalog.tables.filter((t) => t.rls).map((t) => [t.name, t]));
@@ -128,14 +128,14 @@ export async function analyze(root, opts = {}) {
     // Tables the view reads that have RLS: an owner-rights view returns their rows without it.
     const reads = [...rlsTables.keys()].filter((name) => new RegExp(String.raw`(^|[^\w$."])` + (name.includes('.') ? '' : String.raw`(?:public\s*\.\s*)?`) + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + String.raw`(?![\w$])`, 'i').test(v.text || ''));
     node(`table:${v.name}`, 'view', v.name, { schema: v.schema, securityInvoker: v.securityInvoker, materialized: v.materialized || undefined, readsRls: reads.length ? reads : undefined, at: v.at,
-      ...(v.grants !== undefined ? { clientPrivs: clientPrivs(v.grants) } : {}) });
+      ...(v.grants !== undefined ? { clientPrivs: clientPrivs(v.grants) } : {}), ...(v.grantsUncertain ? { grantsUncertain: v.grantsUncertain } : {}) });
   }
   const fnIdsByName = new Map();
   for (const f of catalog.functions) {
     node(`fn:${f.key}`, 'function', f.name, {
       schema: f.schema, arity: f.arity, kind: f.kind, triggerOnly: f.triggerOnly || undefined, securityDefiner: f.securityDefiner,
       returns: f.returns, args: f.args, anon: f.anon, authenticated: f.authenticated, at: f.at,
-      signatures: f.signatures.length > 1 ? f.signatures : undefined,
+      signatures: f.signatures.length > 1 ? f.signatures : undefined, ...(f.grantsUncertain ? { grantsUncertain: f.grantsUncertain } : {}),
     });
     if (!fnIdsByName.has(f.name)) fnIdsByName.set(f.name, []);
     fnIdsByName.get(f.name).push(`fn:${f.key}`);
@@ -289,7 +289,15 @@ export async function analyze(root, opts = {}) {
   if (catalog.dynamic.length) {
     // DO blocks with EXECUTE may create policies/triggers we cannot see; count their references (conservative).
     node('sql:dynamic', 'cron', 'DO blocks (dynamic SQL)', { at: `${catalog.dynamic.length} block(s)` });
-    for (const d of catalog.dynamic) refsFrom('sql:dynamic', d.text, d.at, 'dynamic-sql', null);
+    for (const d of catalog.dynamic) {
+      refsFrom('sql:dynamic', d.text, d.at, 'dynamic-sql', null);
+      // A DO block that creates or alters policies with EXECUTE: functions named anywhere in its strings
+      // (the template or a format() argument holding the USING expression) are treated as used by
+      // policies, so they keep the grant the policy needs. Inferred: the policy text is not known.
+      if (/\b(create|alter)\s+policy\b/i.test(d.text)) {
+        for (const f of sqlRefs(d.text, fnNames, 'public', { allStrings: true }).fns) for (const t of fnIdsByName.get(f)) edge('sql:dynamic', t, 'dynamic-policy-uses', 'inferred', d.at);
+      }
+    }
   }
   for (const c of catalog.cron) refsFrom(`cron:${c.name}`, c.command, c.at, 'cron', null);
 
@@ -358,6 +366,8 @@ export async function analyze(root, opts = {}) {
     stats,
     rules: ran.rules,
     counts: Object.fromEntries(ran.rules.map((r) => [r.id, ran.findings.filter((f) => f.rule === r.id).length])),
+    tiers: Object.fromEntries(TIERS.map((t) => [t, ran.findings.filter((f) => f.tier === t).length])),
+    sarifLevels: { ...cfg.sarifLevels },
     findings: ran.findings,
     suppressed: ran.suppressed,
     info,

@@ -400,3 +400,59 @@ test('auto grant model: legacy replay plus a notice when config.toml is silent; 
   const f = o.findings.find((x) => x.rule === 'client-table-not-granted');
   assert.ok(f && /opt-in/.test(f.note));
 });
+
+test('R1 a helper named in a DO block that alters policies via EXECUTE format() is policy-used, never a revoke candidate', async () => {
+  const sql = `
+    create table public.rooms (id int, org int); alter table public.rooms enable row level security;
+    create table public.doors (id int, org int); alter table public.doors enable row level security;
+    create function public.may_enter(o int) returns boolean language sql stable security definer as $$ select o > 0 $$;
+    create policy p on public.rooms for select to authenticated using (true);
+    create policy p on public.doors for select to authenticated using (true);
+    do $$ declare t text; begin
+      for t in select tablename from pg_tables where schemaname = 'public' loop
+        execute format('alter policy p on public.%I using (%s)', t, 'public.may_enter(org)');
+      end loop;
+    end $$;`;
+  const r = await run(sql);
+  assert.ok(!ids(r, 'exposed-uncalled-function').includes('may_enter/1'));
+  const f = r.findings.find((x) => x.fingerprint === 'granted-helper-function:may_enter/1');
+  assert.ok(f, 'reported as a helper');
+  assert.ok(f.usedBy.includes('dynamic-policy-uses'));
+  assert.notEqual(f.tier, 'fix');
+});
+
+test('R2 a revoke loop over pg_proc with a literal name list is applied; a LIKE list makes exposure uncertain', async () => {
+  const r = await run(`
+    create function public.a() returns void language sql as $$ select 1 $$;
+    create function public.a(x int) returns void language sql as $$ select 1 $$;
+    create function public.b() returns void language sql as $$ select 1 $$;
+    create function public.adm_x() returns void language sql as $$ select 1 $$;
+    create function public.keep() returns void language sql as $$ select 1 $$;
+    do $$ declare r record; begin
+      for r in select p.oid from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname in ('a', 'b') loop
+        execute format('revoke execute on function %s from public, anon, authenticated', r.oid::regprocedure);
+      end loop;
+      for r in select oid from pg_proc where proname like 'adm\\_%' loop
+        execute format('revoke execute on function %s from anon', r.oid::regprocedure);
+      end loop;
+    end $$;`);
+  const uncalled = ids(r, 'exposed-uncalled-function');
+  for (const n of ['a/0', 'a/1', 'b/0']) assert.ok(!uncalled.includes(n), n);
+  assert.ok(uncalled.includes('keep/0'));
+  const adm = r.findings.find((x) => x.fingerprint === 'exposed-uncalled-function:adm_x/0');
+  assert.ok(adm && adm.confidence === 'low' && adm.tier === 'review', JSON.stringify(adm));
+  assert.equal(r.findings.find((x) => x.fingerprint === 'exposed-uncalled-function:keep/0').tier, 'fix');
+});
+
+test('R3 column-level grants count as table privileges; a column list built in a DO block is uncertain', async () => {
+  const base = `create table public.t (id int, name text, secret text); alter table public.t enable row level security;
+    create policy p on public.t for select to authenticated using (true);`;
+  const a = await run(base + `grant select (id, name) on public.t to authenticated; revoke select (secret) on public.t from authenticated;`, { code: from('t'), config: { supabaseDefaultGrants: 'opt-in' } });
+  assert.deepEqual(ids(a, 'client-table-not-granted'), []);
+  const b = await run(base + `do $$ declare cols text; begin
+      select string_agg(quote_ident(column_name), ', ') into cols from information_schema.columns where table_name = 't' and column_name <> 'secret';
+      execute format('grant select (%s) on public.t to authenticated', cols);
+    end $$;`, { code: from('t'), config: { supabaseDefaultGrants: 'opt-in' } });
+  const f = b.findings.find((x) => x.rule === 'client-table-not-granted');
+  assert.ok(f && f.confidence === 'low' && f.tier === 'review', JSON.stringify(f));
+});

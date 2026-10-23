@@ -8,8 +8,11 @@ const code = mdCode;
 /** Inline code inside a table cell: `|` must be escaped even inside a code span. */
 const tcode = (s) => code(s).replace(/\|/g, '\\|');
 
+const TIER_OF_LEVEL = { error: 'fix', warning: 'review', note: 'info' };
+
 export function renderReport(r) {
   const L = [];
+  r = { ...r, findings: r.findings.map((f) => (f.tier ? f : { ...f, tier: TIER_OF_LEVEL[f.level] || 'review' })) };
   L.push(`# supareach report: ${esc(r.root)}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
   if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${esc(w)}`, ''); }
   L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
@@ -19,11 +22,17 @@ export function renderReport(r) {
       + (g.live ? ` Live database: tables ${esc(g.live.tables)}; functions ${esc(g.live.functions)}.` : ''), '');
   }
   for (const n of r.notices || []) L.push(`> **Note:** ${esc(n)}`, '');
-  L.push('## Summary', '', '| Finding | Count |', '|---|---|');
-  for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`, ${rule.level}) | ${r.counts[rule.id]} |`);
-  L.push(`| Storage buckets referenced (info) | ${r.info.storage_buckets.length} |`);
-  L.push(`| Unresolved dynamic names (info) | ${r.info.unresolved_dynamic_calls.length} |`);
-  L.push(`| SQL statements not understood (info) | ${r.info.unparsed_sql.length} |`, '');
+  const t = r.tiers || { fix: 0, review: 0, info: 0 };
+  const inTier = (rule, tier) => r.findings.filter((f) => f.rule === rule && f.tier === tier).length;
+  L.push('## Summary', '', `**Fix ${t.fix}** · Review ${t.review} · Info ${t.info}`, '',
+    '- **Fix**: high confidence. Reachable by anon/authenticated (or PUBLIC) with no recognised caller and no dynamic call that could reach it, or client-used tables without RLS. Act on these.',
+    '- **Review**: the same kinds of problem with a caveat (dynamic calls or dynamic SQL, heuristic client detection, indirect reachability), or a functional problem rather than an exposure.',
+    '- **Info**: intended or benign patterns (helpers RLS policies need, notes).', '',
+    '| Finding | Fix | Review | Info |', '|---|---:|---:|---:|');
+  for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`) | ${inTier(rule.id, 'fix')} | ${inTier(rule.id, 'review')} | ${inTier(rule.id, 'info')} |`);
+  L.push(`| Storage buckets referenced (info) | | | ${r.info.storage_buckets.length} |`);
+  L.push(`| Unresolved dynamic names (info) | | | ${r.info.unresolved_dynamic_calls.length} |`);
+  L.push(`| SQL statements not understood (info) | | | ${r.info.unparsed_sql.length} |`, '');
   const s = r.stats;
   L.push('## What was scanned', '',
     `- ${s.files_scanned} code files, ${s.call_sites} resolved call sites, ${s.unresolved} unresolved.`,
@@ -36,21 +45,28 @@ export function renderReport(r) {
   // Rule `title` and `why` are emitted as Markdown without escaping. They are trusted: core rules ship
   // with supareach, and plugin rules are code that only loads with --allow-plugins (refused on pull
   // request events), so their author can already run anything. Finding data is always escaped.
-  for (const rule of r.rules) {
-    const items = r.findings.filter((f) => f.rule === rule.id);
-    L.push(`## ${rule.title} (${items.length})`, '', `\`${rule.id}\`, ${rule.level}${rule.plugin ? `, from plugin \`${rule.plugin}\`` : ''}. ${rule.why}`, '');
-    if (!items.length) { L.push('None.', ''); continue; }
-    for (const it of items) {
-      const bits = [];
-      if (it.roles) bits.push(`callable by ${it.roles.join(', ')}`);
-      if (it.securityDefiner) bits.push('SECURITY DEFINER');
-      if (it.sites) bits.push(`${it.sites} site(s)`);
-      if (it.usedBy) bits.push(`used by ${it.usedBy.join(', ')}`);
-      if (it.message) bits.push(it.message);
-      if (it.note) bits.push(it.note);
-      L.push(`- ${code(it.id)}${bits.length ? ' (' + esc(bits.join('; ')) + ')' : ''}${it.at ? ' at ' + code(it.at) : ''}`);
+  const TITLES = { fix: 'Fix', review: 'Review', info: 'Info' };
+  for (const tier of ['fix', 'review', 'info']) {
+    const n = r.findings.filter((f) => f.tier === tier).length;
+    L.push(`## ${TITLES[tier]} (${n})`, '');
+    if (!n) { L.push('Nothing in this tier.', ''); continue; }
+    for (const rule of r.rules) {
+      const items = r.findings.filter((f) => f.rule === rule.id && f.tier === tier);
+      if (!items.length) continue;
+      L.push(`### ${rule.title} (${items.length})`, '', `\`${rule.id}\`${rule.plugin ? `, from plugin \`${rule.plugin}\`` : ''}. ${rule.why}`, '');
+      for (const it of items) {
+        const bits = [];
+        if (it.level !== rule.level) bits.push(it.level);
+        if (it.roles) bits.push(`callable by ${it.roles.join(', ')}`);
+        if (it.securityDefiner) bits.push('SECURITY DEFINER');
+        if (it.sites) bits.push(`${it.sites} site(s)`);
+        if (it.usedBy) bits.push(`used by ${it.usedBy.join(', ')}`);
+        if (it.message) bits.push(it.message);
+        if (it.note) bits.push(it.note);
+        L.push(`- ${code(it.id)}${bits.length ? ' (' + esc(bits.join('; ')) + ')' : ''}${it.at ? ' at ' + code(it.at) : ''}`);
+      }
+      L.push('');
     }
-    L.push('');
   }
 
   if (r.suppressed.length) {

@@ -54,17 +54,27 @@ test('CLI writes outputs; --check gates on fingerprints, not counts', () => {
   assert.equal(r.status, 0, r.stderr);
 
   // Count-neutral swap: the baseline has a finding that is gone and lacks one that is present.
-  const swapped = b.findings.filter((x) => x !== 'missing-rpc:delete_everything').concat('missing-rpc:something_fixed');
+  const swapped = b.findings.filter((x) => x !== 'client-table-without-rls:audit_log').concat('missing-rpc:something_fixed');
   fs.writeFileSync(baseline, JSON.stringify({ ...b, findings: swapped }));
   r = run(demo, '--no-output', '--baseline', baseline, '--check');
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /NEW error missing-rpc:delete_everything/);
+  assert.match(r.stderr, /NEW fix client-table-without-rls:audit_log/);
   assert.match(r.stdout, /no longer present[\s\S]*missing-rpc:something_fixed/);
+
+  // Review-tier findings gate only with --check-level review.
+  const noReview = b.findings.filter((x) => x !== 'missing-rpc:delete_everything');
+  fs.writeFileSync(baseline, JSON.stringify({ ...b, findings: noReview }));
+  r = run(demo, '--no-output', '--baseline', baseline, '--check');
+  assert.equal(r.status, 0, r.stderr);
+  r = run(demo, '--no-output', '--baseline', baseline, '--check', '--check-level', 'review');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /NEW review missing-rpc:delete_everything/);
+  fs.writeFileSync(baseline, JSON.stringify({ ...b, findings: swapped }));
 
   // --update-baseline only shrinks unless --force.
   r = run(demo, '--no-output', '--baseline', baseline, '--update-baseline');
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /refused[\s\S]*missing-rpc:delete_everything/);
+  assert.match(r.stderr, /refused[\s\S]*client-table-without-rls:audit_log/);
   r = run(demo, '--no-output', '--baseline', baseline, '--update-baseline', '--force');
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(fs.readFileSync(baseline, 'utf8')).findings, b.findings);
