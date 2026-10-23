@@ -1,0 +1,4 @@
+project_id = "demo-app"
+
+[functions.payment-webhook]
+verify_jwt = false

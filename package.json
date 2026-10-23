@@ -1,0 +1,17 @@
+{
+  "name": "supagraph",
+  "version": "0.0.1",
+  "description": "Map how your app code reaches your Supabase schema: tables, RPCs, edge functions, storage, grants and RLS. Static, offline, no AI.",
+  "type": "module",
+  "bin": { "supagraph": "bin/supagraph.js" },
+  "files": ["bin", "src", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test",
+    "demo": "node bin/supagraph.js examples/demo-app"
+  },
+  "keywords": ["supabase", "postgres", "rls", "static-analysis", "call-graph", "cli"],
+  "license": "MIT",
+  "author": "Edan Barrios",
+  "dependencies": { "typescript": "^5.4.0" }
+}
