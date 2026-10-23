@@ -149,3 +149,23 @@ test('unknown statements are reported, not silently dropped', () => {
   const st = run(`create aggregate x (int) (sfunc = f, stype = int); create statistics s on a, b from t; create rule r as on insert to t do nothing;`);
   assert.ok(st.unparsed.length >= 1);
 });
+
+test('catalog groups functions by name + arity; same-arity overloads merge with grants ORed', async () => {
+  const { fromMigrations } = await import('../src/catalog.js');
+  const st = run(`
+    create function f(a int) returns int language sql as $$ select 1 $$;
+    revoke execute on function f(int) from public, anon, authenticated;
+    create function f(a int, b int) returns int language sql as $$ select 2 $$;
+    create function g(a int) returns int language sql as $$ select 1 $$;
+    create function g(a text) returns int language sql as $$ select 1 $$;
+    revoke execute on function g(int) from public, anon, authenticated;
+    create function s.h() returns int language sql as $$ select 1 $$;`);
+  const c = fromMigrations(st);
+  const by = Object.fromEntries(c.functions.map((f) => [f.key, f]));
+  assert.deepEqual(Object.keys(by).sort(), ['f/1', 'f/2', 'g/1', 's.h/0']);
+  assert.equal(by['f/1'].authenticated, false);
+  assert.equal(by['f/2'].authenticated, true);
+  assert.equal(by['g/1'].authenticated, true);
+  assert.deepEqual(by['g/1'].signatures, ['g(integer)', 'g(text)']);
+  assert.equal(by['s.h/0'].schema, 's');
+});

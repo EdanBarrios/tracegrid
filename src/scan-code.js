@@ -149,8 +149,27 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
   const local = new Map();
   for (const k of ['rpc', 'from', 'invoke']) for (const w of wrappers[k] || []) local.set(w, { kind: k === 'from' ? 'table' : k, index: 0, extra: k === 'from' ? { op: 'other', via: w } : { via: w } });
 
+  /** `x.schema('s')` -> 's' (a literal or same-file const), else null. */
+  function schemaOf(recv) {
+    const r = unwrap(recv);
+    if (!r || !ts.isCallExpression(r)) return null;
+    const c = unwrap(r.expression);
+    if (!ts.isPropertyAccessExpression(c) || c.name.text !== 'schema' || !r.arguments[0]) return null;
+    const v = resolveName(r.arguments[0], consts);
+    return v && v.names.length === 1 ? v.names[0] : null;
+  }
+
   /** What Supabase call (if any) this call expression is, and which argument names the target. */
   function classify(n) {
+    const k = classifyCall(n);
+    if (k && (k.kind === 'rpc' || k.kind === 'table')) {
+      const callee = unwrap(n.expression);
+      const sch = ts.isPropertyAccessExpression(callee) ? schemaOf(callee.expression) : null;
+      if (sch) k.extra = { ...k.extra, schema: sch };
+    }
+    return k;
+  }
+  function classifyCall(n) {
     const callee = unwrap(n.expression);
     if (ts.isPropertyAccessExpression(callee)) {
       const name = callee.name.text;
@@ -216,7 +235,8 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       unresolved.push(u);
       return;
     }
-    for (const name of r.names) calls.push({ kind: k, name, file, line: lineOf(node), confidence: r.confidence, ...extra, ...(r.hatch ? { via: 'hatch' } : {}) });
+    const q = extra.schema && extra.schema !== 'public' ? `${extra.schema}.` : '';
+    for (const name of r.names) calls.push({ kind: k, name: q + name, file, line: lineOf(node), confidence: r.confidence, ...extra, ...(r.hatch ? { via: 'hatch' } : {}) });
   }
 
   function visit(n) {

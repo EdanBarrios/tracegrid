@@ -14,7 +14,9 @@ const bin = path.join(here, '..', 'bin', 'supareach.js');
 test('demo app findings', async () => {
   const r = await analyze(demo);
   const ids = (k) => r.findings.filter((f) => f.rule === k).map((f) => f.id).sort();
-  assert.deepEqual(ids('exposed-uncalled-function'), ['internal_cleanup', 'next_invoice_number']);
+  assert.deepEqual(ids('exposed-uncalled-function'), ['internal_cleanup/0', 'next_invoice_number/1']);
+  assert.deepEqual(ids('granted-helper-function'), ['is_project_member/1']);
+  assert.deepEqual(r.findings.find((f) => f.rule === 'granted-helper-function').usedBy, ['policy-uses']);
   assert.deepEqual(ids('client-table-without-rls'), ['audit_log']);
   assert.deepEqual(ids('client-table-without-policies'), ['invoices']);
   assert.deepEqual(ids('missing-rpc'), ['delete_everything']);
@@ -27,10 +29,10 @@ test('demo app findings', async () => {
   assert.equal(r.info.unresolved_dynamic_calls.length, 1);
   assert.equal(r.schema_version, 1);
   // graph shape
-  const e = r.edges.find((x) => x.target === 'fn:project_stats_v2');
+  const e = r.edges.find((x) => x.target === 'fn:project_stats_v2/1');
   assert.equal(e.confidence, 'inferred');
   assert.ok(r.edges.some((x) => x.source === 'cron:nightly-digest' && x.target === 'edge:nightly-digest'));
-  assert.ok(r.edges.some((x) => x.source === 'table:tasks' && x.target === 'fn:is_project_member' && x.kind === 'policy-uses'));
+  assert.ok(r.edges.some((x) => x.source === 'table:tasks' && x.target === 'fn:is_project_member/1' && x.kind === 'policy-uses'));
 });
 
 const run = (...a) => spawnSync(process.execPath, [bin, ...a], { encoding: 'utf8' });

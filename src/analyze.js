@@ -2,7 +2,8 @@
 import path from 'node:path';
 import { loadConfig, findFiles } from './config.js';
 import { scanFiles } from './scan-code.js';
-import { scanMigrations, sqlRefs, fnSummary } from './scan-sql.js';
+import { scanMigrations, sqlRefs } from './scan-sql.js';
+import { fromMigrations, schemaOf } from './catalog.js';
 import { listEdgeFunctions } from './edge-functions.js';
 import { coreRules } from './rules/core.js';
 import { loadPlugins, runRules, makeGraph } from './engine.js';
@@ -11,7 +12,7 @@ export const SCHEMA_VERSION = 1;
 
 /** Config ignore list that applies to each core rule. */
 const IGNORE_CATEGORY = {
-  'exposed-uncalled-function': 'functions',
+  'exposed-uncalled-function': 'functions', 'granted-helper-function': 'functions',
   'client-table-without-rls': 'tables', 'client-table-without-policies': 'tables', 'unknown-table': 'tables',
   'missing-rpc': 'rpcs',
   'uncalled-edge-function': 'edgeFunctions',
@@ -41,6 +42,7 @@ export async function analyze(root, opts = {}) {
   const files = findFiles(root, cfg.include, cfg.exclude);
   const code = scanFiles(root, files, cfg.wrappers);
   const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants });
+  const catalog = fromMigrations(sql);
   const edgeFns = listEdgeFunctions(root, cfg.functionsDir);
   const edgeNames = new Set(edgeFns.map((e) => e.name));
   const fnPrefix = cfg.functionsDir.replace(/\/$/, '') + '/';
@@ -73,15 +75,20 @@ export async function analyze(root, opts = {}) {
   };
 
   // Schema nodes
-  for (const t of sql.tables.values()) node(`table:${t.name}`, 'table', t.name, { rls: t.rls, policies: t.policies.size, defined: !t.external, at: `${t.file}:${t.line}` });
-  for (const v of sql.views.values()) node(`table:${v.name}`, 'view', v.name, { securityInvoker: v.securityInvoker, at: `${v.file}:${v.line}` });
-  const fns = new Map([...sql.functions.values()].map((f) => [f.name, fnSummary(f)]));
-  for (const f of fns.values()) {
-    node(`fn:${f.name}`, 'function', f.name, {
-      kind: f.kind, triggerOnly: f.triggerOnly || undefined, securityDefiner: f.securityDefiner, returns: f.returns, args: f.args, anon: f.anon,
-      authenticated: f.authenticated, at: `${f.file}:${f.line}`, overloads: f.overloads > 1 ? f.overloads : undefined,
+  for (const t of catalog.tables) node(`table:${t.name}`, 'table', t.name, { schema: t.schema, rls: t.rls, policies: t.policies.length, defined: !t.external, at: t.at });
+  for (const v of catalog.views) node(`table:${v.name}`, 'view', v.name, { schema: v.schema, securityInvoker: v.securityInvoker, at: v.at });
+  const fnIdsByName = new Map();
+  for (const f of catalog.functions) {
+    node(`fn:${f.key}`, 'function', f.name, {
+      schema: f.schema, arity: f.arity, kind: f.kind, triggerOnly: f.triggerOnly || undefined, securityDefiner: f.securityDefiner,
+      returns: f.returns, args: f.args, anon: f.anon, authenticated: f.authenticated, at: f.at,
+      signatures: f.signatures.length > 1 ? f.signatures : undefined,
     });
+    if (!fnIdsByName.has(f.name)) fnIdsByName.set(f.name, []);
+    fnIdsByName.get(f.name).push(`fn:${f.key}`);
   }
+  /** Node ids for a function name: every arity, or one `missing` node. */
+  const fnTargets = (name) => fnIdsByName.get(name) || [node(`fn:${name}`, 'function', name, { schema: schemaOf(name), missing: true }).id];
   for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.dir });
   // External entry points: config, `// supareach: entry-point <reason>` hatches, verify_jwt = false.
   const entries = [];
@@ -108,7 +115,7 @@ export async function analyze(root, opts = {}) {
     edge('external:http', `edge:${ep.name}`, 'entry-point', ep.confidence, ep.source);
   }
 
-  for (const c of sql.cron.values()) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: `${c.file}:${c.line}` });
+  for (const c of catalog.cron) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: c.at });
 
   // Code edges
   const invoked = new Map();
@@ -119,10 +126,9 @@ export async function analyze(root, opts = {}) {
     if (caller.id.startsWith('file:')) node(caller.id, 'file', c.file, { side: caller.side });
     const at = `${c.file}:${c.line}`;
     if (c.kind === 'rpc') {
-      node(`fn:${c.name}`, 'function', c.name, nodes.has(`fn:${c.name}`) ? {} : { missing: true });
-      edge(caller.id, `fn:${c.name}`, 'rpc', c.confidence, at);
+      for (const t of fnTargets(c.name)) edge(caller.id, t, 'rpc', c.confidence, at);
     } else if (c.kind === 'table') {
-      if (!nodes.has(`table:${c.name}`)) node(`table:${c.name}`, 'table', c.name, { missing: true });
+      if (!nodes.has(`table:${c.name}`)) node(`table:${c.name}`, 'table', c.name, { schema: schemaOf(c.name), missing: true });
       edge(caller.id, `table:${c.name}`, 'from', c.confidence, at, c.op);
     } else if (c.kind === 'invoke') {
       if (!nodes.has(`edge:${c.name}`)) node(`edge:${c.name}`, 'edge_function', c.name, { missing: true });
@@ -136,43 +142,45 @@ export async function analyze(root, opts = {}) {
   }
 
   // SQL edges (all inferred: found by text search in SQL bodies)
-  const fnNames = new Set([...sql.functions.keys()]);
-  const sqlCalled = new Map(); // fn -> [referrer]
-  const sqlInvoked = new Map(); // edge fn -> [referrer]
+  const fnNames = new Set(fnIdsByName.keys());
   const refsFrom = (srcId, text, at, kind, self) => {
     const r = sqlRefs(text, fnNames);
-    for (const f of r.fns) if (f !== self) { edge(srcId, `fn:${f}`, kind, 'inferred', at); push(sqlCalled, f, srcId); }
+    for (const f of r.fns) for (const t of fnIdsByName.get(f)) if (t !== self) edge(srcId, t, kind, 'inferred', at);
     for (const e of r.edges) {
       if (!nodes.has(`edge:${e}`)) node(`edge:${e}`, 'edge_function', e, { missing: true });
-      edge(srcId, `edge:${e}`, 'http', 'inferred', at); push(sqlInvoked, e, srcId);
+      edge(srcId, `edge:${e}`, 'http', 'inferred', at);
     }
   };
-  for (const f of fns.values()) refsFrom(`fn:${f.name}`, f.body, `${f.file}:${f.line}`, 'sql-call', f.name);
-  for (const v of sql.views.values()) refsFrom(`table:${v.name}`, v.text, `${v.file}:${v.line}`, 'view-uses', null);
-  for (const t of sql.tables.values()) {
-    refsFrom(`table:${t.name}`, t.text, `${t.file}:${t.line}`, 'default-uses', null);
-    for (const p of t.policies.values()) refsFrom(`table:${t.name}`, p.text, `${p.file}:${p.line}`, 'policy-uses', null);
+  for (const f of catalog.functions) refsFrom(`fn:${f.key}`, f.body, f.at, 'sql-call', `fn:${f.key}`);
+  for (const v of catalog.views) refsFrom(`table:${v.name}`, v.text, v.at, 'view-uses', null);
+  for (const t of catalog.tables) {
+    refsFrom(`table:${t.name}`, t.text, t.at, 'default-uses', null);
+    for (const p of t.policies) refsFrom(`table:${t.name}`, p.text, p.at, 'policy-uses', null);
   }
-  for (const tr of sql.triggers.values()) {
-    const src = tr.table === '(event)' ? `fn:${tr.fn}` : `table:${tr.table}`;
-    if (sql.functions.has(tr.fn)) { edge(src, `fn:${tr.fn}`, 'trigger', 'extracted', `${tr.file}:${tr.line}`); push(sqlCalled, tr.fn, `trigger:${tr.name}`); }
+  for (const tr of catalog.triggers) {
+    for (const t of fnIdsByName.get(tr.fn) || []) {
+      const src = tr.table === '(event)' ? t : `table:${tr.table}`;
+      if (src !== t) edge(src, t, 'trigger', 'extracted', tr.at);
+      else edge('sql:event-trigger', t, 'trigger', 'extracted', tr.at);
+    }
   }
-  if (sql.dynamic.length) {
+  if (nodes.size && [...edges.values()].some((e) => e.source === 'sql:event-trigger')) node('sql:event-trigger', 'cron', 'event triggers');
+  if (catalog.dynamic.length) {
     // DO blocks with EXECUTE may create policies/triggers we cannot see; count their references (conservative).
-    node('sql:dynamic', 'cron', 'DO blocks (dynamic SQL)', { at: `${sql.dynamic.length} block(s)` });
-    for (const d of sql.dynamic) refsFrom('sql:dynamic', d.text, `${d.file}:${d.line}`, 'dynamic-sql', null);
+    node('sql:dynamic', 'cron', 'DO blocks (dynamic SQL)', { at: `${catalog.dynamic.length} block(s)` });
+    for (const d of catalog.dynamic) refsFrom('sql:dynamic', d.text, d.at, 'dynamic-sql', null);
   }
-  for (const c of sql.cron.values()) refsFrom(`cron:${c.name}`, c.command, `${c.file}:${c.line}`, 'cron', null);
+  for (const c of catalog.cron) refsFrom(`cron:${c.name}`, c.command, c.at, 'cron', null);
 
   // Findings
   const graph = makeGraph([...nodes.values()], [...edges.values()]);
   const suppress = makeSuppressor(cfg, [...code.hatches.suppress, ...sql.hatches.suppress]);
-  const ran = runRules([...coreRules, ...plugins], { graph, catalog: sql, config: cfg, root }, suppress);
+  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root }, suppress);
 
   const info = {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),
     unresolved_dynamic_calls: code.unresolved,
-    unparsed_sql: sql.unparsed,
+    unparsed_sql: catalog.unparsed,
     unreadable_files: code.failed,
     external_entry_points: [...entryByName.values()].map(({ name, reason, source }) => ({ id: name, reason, source })),
     invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid, ...entryInvalid],
@@ -185,12 +193,13 @@ export async function analyze(root, opts = {}) {
     distinct_tables_touched: { client: distinct(code.calls, 'table', callerOf, 'client'), edge: distinct(code.calls, 'table', callerOf, 'edge') },
     distinct_edge_functions_invoked: invoked.size,
     unresolved: code.unresolved.length,
-    migrations: sql.stats.files,
-    sql_statements: sql.stats.statements,
-    sql_unparsed: sql.unparsed.length,
-    tables: sql.tables.size, views: sql.views.size, functions: sql.functions.size,
-    policies: [...sql.tables.values()].reduce((a, t) => a + t.policies.size, 0),
-    cron_jobs: sql.cron.size, edge_functions: edgeFns.length,
+    migrations: catalog.stats.migrations,
+    sql_statements: catalog.stats.statements,
+    sql_unparsed: catalog.unparsed.length,
+    tables: catalog.tables.length, views: catalog.views.length, functions: catalog.functions.length,
+    policies: catalog.tables.reduce((a, t) => a + t.policies.length, 0),
+    cron_jobs: catalog.cron.length, edge_functions: edgeFns.length,
+    rpcs_called_by_code: graph.nodes.filter((n) => n.type === 'function' && !n.missing && graph.incoming(n.id).some((e) => e.kind === 'rpc')).length,
   };
 
   return {

@@ -11,6 +11,11 @@ function clientTables(graph) {
 }
 
 const callers = (graph, id) => graph.incoming(id).filter((e) => e.source !== id);
+const exposed = (config) => new Set(config.exposedSchemas || ['public']);
+/** Functions in an exposed schema that anon or authenticated can execute. */
+const grantedFunctions = (graph, config) => graph.nodes.filter((n) => n.type === 'function' && !n.missing && n.kind === 'function'
+  && !n.triggerOnly && exposed(config).has(n.schema || 'public') && (n.anon || n.authenticated));
+const fnFinding = (n, extra = {}) => ({ id: n.id.slice(3), node: n.id, at: n.at, roles: ['anon', 'authenticated'].filter((r) => n[r]), securityDefiner: n.securityDefiner, ...extra });
 
 export const coreRules = [
   {
@@ -18,12 +23,20 @@ export const coreRules = [
     level: 'error',
     title: 'Functions callable by anon/authenticated that nothing calls',
     why: 'No `.rpc()` in code, and no cron job, trigger, policy, view or other SQL function references them. Each is surface any signed-in (or anonymous) user can call through the Data API. Revoke the grant, or ignore it with a reason if a caller is coming.',
-    run({ graph }) {
-      return graph.nodes
-        .filter((n) => n.type === 'function' && !n.missing && n.kind === 'function' && !n.triggerOnly && !n.label.includes('.'))
-        .filter((n) => n.anon || n.authenticated)
-        .filter((n) => callers(graph, n.id).length === 0)
-        .map((n) => ({ id: n.label, node: n.id, at: n.at, roles: ['anon', 'authenticated'].filter((r) => n[r]), securityDefiner: n.securityDefiner }));
+    run({ graph, config }) {
+      return grantedFunctions(graph, config).filter((n) => callers(graph, n.id).length === 0).map((n) => fnFinding(n));
+    },
+  },
+  {
+    id: 'granted-helper-function',
+    level: 'note',
+    title: 'Helper functions callable by anon/authenticated that only SQL uses',
+    why: 'No `.rpc()` in code calls these, but a policy, view, trigger, cron job or other SQL function does. They are still callable directly through the Data API. A helper used by RLS policies or invoker views needs the grant; one used only by cron, triggers or SECURITY DEFINER functions usually does not.',
+    run({ graph, config }) {
+      return grantedFunctions(graph, config)
+        .map((n) => ({ n, inc: callers(graph, n.id) }))
+        .filter(({ inc }) => inc.length && !inc.some((e) => e.kind === 'rpc'))
+        .map(({ n, inc }) => fnFinding(n, { usedBy: [...new Set(inc.map((e) => e.kind))].sort() }));
     },
   },
   {

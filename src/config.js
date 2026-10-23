@@ -21,6 +21,8 @@ export const DEFAULTS = {
   // Supabase grants EXECUTE on new public functions to anon and authenticated by default
   // (on top of Postgres' default EXECUTE to PUBLIC). Set false for a vanilla Postgres model.
   supabaseDefaultGrants: true,
+  // Schemas the Data API exposes (Supabase: Settings > API > Exposed schemas).
+  exposedSchemas: ['public'],
   // Edge functions called from outside the codebase (webhooks, OAuth callbacks, auth hooks,
   // health checks): [{ "name": "stripe-webhook", "reason": "Stripe calls it" }].
   entryPoints: [],

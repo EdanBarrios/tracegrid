@@ -83,3 +83,15 @@ test('JSX files parse', () => {
   const r = scanSource(`export const A = () => <div onClick={() => supabase.rpc('clicked')}>hi</div>;`, 'a.jsx');
   assert.deepEqual(names(r, 'rpc'), ['clicked']);
 });
+
+test('.schema(x) qualifies table and rpc names; public stays bare', () => {
+  const r = scanSource(`
+    supabase.schema('billing').from('invoices').select();
+    supabase.schema("billing").rpc('close_month');
+    supabase.schema('public').from('tasks').select();
+    const S = 'ops'; db.schema(S).from('jobs').insert({});
+  `, 'a.ts');
+  assert.deepEqual(r.calls.map((c) => [c.kind, c.name, c.schema]), [
+    ['table', 'billing.invoices', 'billing'], ['rpc', 'billing.close_month', 'billing'], ['table', 'tasks', 'public'], ['table', 'ops.jobs', 'ops'],
+  ]);
+});

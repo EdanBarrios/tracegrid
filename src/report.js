@@ -27,6 +27,8 @@ export function renderReport(r) {
       if (it.roles) bits.push(`callable by ${it.roles.join(', ')}`);
       if (it.securityDefiner) bits.push('SECURITY DEFINER');
       if (it.sites) bits.push(`${it.sites} site(s)`);
+      if (it.usedBy) bits.push(`used by ${it.usedBy.join(', ')}`);
+      if (it.message) bits.push(it.message);
       if (it.note) bits.push(it.note);
       L.push(`- \`${it.id}\`${bits.length ? ' (' + bits.join('; ') + ')' : ''}${it.at ? ' at `' + it.at + '`' : ''}`);
     }
