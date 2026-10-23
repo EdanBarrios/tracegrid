@@ -43,8 +43,8 @@ test('local wrappers are inferred transitively and their call sites resolved', (
     call('via_call'); rpc('via_rpc');
   `, 'a.ts');
   assert.deepEqual(names(r, 'rpc'), ['via_call', 'via_rpc']);
-  assert.equal(r.unresolved.length, 2);
-  assert.ok(r.unresolved.every((u) => u.wrapper));
+  // Every call site of both local wrappers passes a literal: nothing is left unresolved.
+  assert.equal(r.unresolved.length, 0);
 });
 
 test('configured cross-file wrapper', () => {
@@ -94,4 +94,26 @@ test('.schema(x) qualifies table and rpc names; public stays bare', () => {
   assert.deepEqual(r.calls.map((c) => [c.kind, c.name, c.schema]), [
     ['table', 'billing.invoices', 'billing'], ['rpc', 'billing.close_month', 'billing'], ['table', 'tasks', 'public'], ['table', 'ops.jobs', 'ops'],
   ]);
+});
+
+test('R4 local wrappers whose call sites all pass literals leave no unresolved site; literal-union types resolve', () => {
+  const cases = {
+    typed: `declare const db: any; const call = (fn: string, args?: object) => db.rpc(fn, args); call('a', {}); call('b');`,
+    generic: `declare const db: any; const call = async <T,>(fn: string, args?: Record<string, unknown>): Promise<T> => { const { data, error } = await db.rpc(fn, args); if (error) throw error; return data as T; }; call<number>('a', {}); call('b');`,
+    alias: `declare const db: any; type Fn = 'a' | 'b'; const call = (fn: Fn, args?: object) => db.rpc(fn, args);`,
+    keyofTypeof: `declare const db: any; const FNS = { a: 1, b: 2 } as const; const call = (fn: keyof typeof FNS) => db.rpc(fn);`,
+    arrayIndex: `declare const db: any; const FNS = ['a', 'b'] as const; const call = (fn: (typeof FNS)[number]) => db.rpc(fn);`,
+    useCallback: `declare const supabase: any; declare const useCallback: any; export function C() { const call = useCallback((fn: string) => supabase.rpc(fn), []); call('a'); call('b'); }`,
+  };
+  for (const [k, src] of Object.entries(cases)) {
+    const r = scanSource(src, 'a.ts');
+    assert.deepEqual(names(r, 'rpc'), ['a', 'b'], k);
+    assert.equal(r.unresolved.length, 0, k);
+  }
+  // Still reported: a call site with a dynamic name, an exported wrapper, a wrapper passed as a value.
+  for (const src of [
+    `declare const db: any; declare const x: string; const call = (fn: string) => db.rpc(fn); call('a'); call(x);`,
+    `declare const db: any; export const call = (fn: string) => db.rpc(fn); call('a');`,
+    `declare const db: any; declare const use: any; const call = (fn: string) => db.rpc(fn); call('a'); use(call);`,
+  ]) assert.ok(scanSource(src, 'a.ts').unresolved.some((u) => u.wrapper === 'call'), src);
 });

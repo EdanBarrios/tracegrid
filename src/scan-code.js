@@ -268,7 +268,7 @@ function analyzer(sf, file, configWrappers, project) {
     }
     if (decl.kind === 'param') {
       if (decl.path.length === 0) {
-        const lits = literalUnion(decl.param.type);
+        const lits = typeLiterals(decl.param.type, 0);
         if (lits) return { vals: lits, conf: lits.length > 1 ? 'ambiguous' : 'inferred' };
       }
       // (f) => ... passed to ['a', 'b'].map / forEach / flatMap / filter
@@ -292,6 +292,61 @@ function analyzer(sf, file, configWrappers, project) {
     }
     return null;
   }
+  /**
+   * String literals a parameter type allows: `'a' | 'b'`, a same-file type alias of such a union,
+   * `keyof typeof OBJ` and `(typeof ARR)[number]` for same-file constants. null when open-ended.
+   */
+  function typeLiterals(t, d) {
+    if (!t || d > 6) return null;
+    if (ts.isParenthesizedTypeNode(t)) return typeLiterals(t.type, d + 1);
+    if (ts.isUnionTypeNode(t)) {
+      const out = [];
+      for (const x of t.types) { const v = typeLiterals(x, d + 1); if (!v) return null; out.push(...v); }
+      return out.length ? [...new Set(out)] : null;
+    }
+    if (ts.isLiteralTypeNode(t)) return ts.isStringLiteral(t.literal) || ts.isNoSubstitutionTemplateLiteral(t.literal) ? [t.literal.text] : null;
+    if (ts.isTypeReferenceNode(t) && ts.isIdentifier(t.typeName) && !t.typeArguments) {
+      const alias = typeAliases().get(t.typeName.text);
+      return alias ? typeLiterals(alias, d + 1) : null;
+    }
+    const constInit = (q) => {
+      if (!q || !ts.isTypeQueryNode(q) || !ts.isIdentifier(q.exprName)) return null;
+      const dd = findDecl(q.exprName);
+      return dd && dd.kind === 'var' && dd.isConst && !dd.path.length ? unwrap(dd.decl.initializer) : null;
+    };
+    if (ts.isTypeOperatorNode(t) && t.operator === ts.SyntaxKind.KeyOfKeyword) {
+      const init = constInit(t.type);
+      if (init && ts.isObjectLiteralExpression(init)) {
+        const keys = init.properties.map((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isMethodDeclaration(p) ? propName(p.name) : null));
+        return keys.length && keys.every((k) => k != null) ? keys : null;
+      }
+      return null;
+    }
+    if (ts.isIndexedAccessTypeNode(t) && t.indexType.kind === ts.SyntaxKind.NumberKeyword) {
+      const q = ts.isParenthesizedTypeNode(t.objectType) ? t.objectType.type : t.objectType;
+      const init = constInit(q);
+      return init ? arrayOf(init, d + 1) : null;
+    }
+    return null;
+  }
+  let aliasMap = null;
+  function typeAliases() {
+    if (aliasMap) return aliasMap;
+    aliasMap = new Map();
+    (function walk(n) { if (ts.isTypeAliasDeclaration(n) && !n.typeParameters) aliasMap.set(n.name.text, n.type); ts.forEachChild(n, walk); })(sf);
+    return aliasMap;
+  }
+  /** The function passed to useCallback(fn, deps) (a stable wrapper around fn), else null. */
+  function callbackOf(e) {
+    e = unwrap(e);
+    if (!e || !ts.isCallExpression(e)) return null;
+    const c = unwrap(e.expression);
+    const nm = ts.isIdentifier(c) ? c.text : ts.isPropertyAccessExpression(c) ? c.name.text : null;
+    if (nm !== 'useCallback') return null;
+    const f = e.arguments[0] && unwrap(e.arguments[0]);
+    return f && (ts.isArrowFunction(f) || ts.isFunctionExpression(f)) ? f : null;
+  }
+
   /** Array of string values: literal arrays, const arrays, imported arrays. */
   function arrayOf(e, d = 0) {
     e = unwrap(e);
@@ -426,6 +481,7 @@ function analyzer(sf, file, configWrappers, project) {
   }
   const fnName = (fn) => {
     if (fn.name && propName(fn.name)) return propName(fn.name);
+    if (fn.parent && ts.isCallExpression(fn.parent) && callbackOf(fn.parent) === fn && ts.isVariableDeclaration(fn.parent.parent) && ts.isIdentifier(fn.parent.parent.name)) return fn.parent.parent.name.text;
     if (fn.parent && ts.isVariableDeclaration(fn.parent) && ts.isIdentifier(fn.parent.name)) return fn.parent.name.text;
     if (fn.parent && ts.isPropertyAssignment(fn.parent)) return propName(fn.parent.name);
     return null;
@@ -440,6 +496,8 @@ function analyzer(sf, file, configWrappers, project) {
       if (d.kind === 'var' && !d.path.length) {
         const init = unwrap(d.decl.initializer);
         if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) return { fn: init };
+        const cb = callbackOf(init);
+        if (cb) return { fn: cb };
         return named.has(callee.text) ? { named: named.get(callee.text) } : null;
       }
       if (d.kind === 'import') {
@@ -552,7 +610,7 @@ function analyzer(sf, file, configWrappers, project) {
       if (w) {
         const arg = wrapperArg(n, w);
         const via = target.fn ? fnName(target.fn) : target.name || (ts.isIdentifier(callee) ? callee.text : callee.getText(sf));
-        return arg ? { kind: w.kind, arg, extra: { ...w.extra, via }, ...(w.privileged ? { privileged: true } : {}), ...(w.weak ? { weak: true } : {}) } : null;
+        return arg ? { kind: w.kind, arg, extra: { ...w.extra, via }, ...(w.privileged ? { privileged: true } : {}), ...(w.weak ? { weak: true } : {}), ...(target.fn ? { wrapperFn: target.fn } : {}) } : null;
       }
     }
     return null;
@@ -574,7 +632,7 @@ function analyzer(sf, file, configWrappers, project) {
     return { fn: d.fn, index: d.index, prop: d.path.length ? d.path[0] : null };
   }
 
-  return { lineOf, str, kind, classify, paramOf, wrappers, fnName, objectOf, arrayOf, isMswFile, findDecl, lookup };
+  return { lineOf, str, kind, classify, paramOf, wrappers, fnName, objectOf, arrayOf, isMswFile, findDecl, lookup, callbackOf };
 }
 
 function literalUnion(t) {
@@ -702,6 +760,33 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
   (function collect(n) { if (ts.isCallExpression(n)) allCalls.push(n); ts.forEachChild(n, collect); })(sf);
   inferWrappers(az, allCalls);
 
+  // The dynamic call inside a wrapper (`const call = (fn) => db.rpc(fn)`) is only reported when some
+  // call site of the wrapper is itself unresolved, or the wrapper can be called from elsewhere.
+  const wrapperBodies = [];
+  const openSites = [];
+  const wrapperSites = new Map();
+  const bump = (fn, k) => { if (!wrapperSites.has(fn)) wrapperSites.set(fn, { open: 0, closed: 0 }); wrapperSites.get(fn)[k]++; };
+  /** The wrapper's name when every use of it in this file is a direct call and it is not exported. */
+  function localOnly(fn) {
+    let nameNode = fn.name && ts.isIdentifier(fn.name) ? fn.name : null;
+    let stmt = fn;
+    if (!nameNode && fn.parent && ts.isVariableDeclaration(fn.parent) && ts.isIdentifier(fn.parent.name)) { nameNode = fn.parent.name; stmt = fn.parent.parent && fn.parent.parent.parent; }
+    if (!nameNode && fn.parent && ts.isCallExpression(fn.parent) && az.callbackOf(fn.parent) === fn && ts.isVariableDeclaration(fn.parent.parent) && ts.isIdentifier(fn.parent.parent.name)) { nameNode = fn.parent.parent.name; stmt = fn.parent.parent.parent && fn.parent.parent.parent.parent; }
+    if (!nameNode) return false;
+    if (stmt && stmt.modifiers && stmt.modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword || m.kind === ts.SyntaxKind.DefaultKeyword)) return false;
+    let escapes = false;
+    (function walk(n) {
+      if (escapes) return;
+      if (ts.isIdentifier(n) && n.text === nameNode.text && n !== nameNode) {
+        const p = n.parent;
+        const memberName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || ((ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isPropertySignature(p)) && p.name === n));
+        if (!memberName && !(p && ts.isCallExpression(p) && unwrap(p.expression) === n) && !(p && (ts.isParenthesizedExpression(p) || ts.isNonNullExpression(p)) && p.parent && ts.isCallExpression(p.parent))) escapes = true;
+      }
+      ts.forEachChild(n, walk);
+    })(sf);
+    return !escapes;
+  }
+
   function record(k, node) {
     const { arg, extra = {} } = k;
     let r = arg ? az.str(arg) : null;
@@ -714,9 +799,13 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       if (w && az.wrappers.has(w.fn)) u.wrapper = az.fnName(w.fn) || '(anonymous)';
       if (r && r.pattern && /[A-Za-z0-9_-]{3}/.test((r.texts || []).join('').replace(new RegExp(UNKNOWN, 'g'), ''))) u.pattern = r.pattern;
       if (extra.schema) u.schema = extra.schema;
-      unresolved.push(u);
+      const inside = w && az.wrappers.has(w.fn) ? w.fn : null;
+      if (k.wrapperFn) { bump(k.wrapperFn, 'open'); openSites.push({ target: k.wrapperFn, inside }); }
+      if (inside) wrapperBodies.push({ u, fn: inside });
+      else unresolved.push(u);
       return;
     }
+    if (k.wrapperFn) bump(k.wrapperFn, 'closed');
     const sch = extra.schema;
     if (sch === '*') unresolved.push({ kind: 'schema', file, line: lineOf(node), expr: short(node.getText(sf)), note: `${k.kind} matched in any exposed schema` });
     const q = sch && sch !== 'public' && sch !== '*' ? `${sch}.` : '';
@@ -806,6 +895,16 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
     ts.forEachChild(n, visit);
   }
   visit(sf);
+  // A wrapper is satisfied when it is local, has a literal call site, and every dynamic call site of
+  // it is the forwarding call inside another satisfied wrapper (rpc -> call -> call('x')).
+  const satisfied = new Set([...wrapperSites].filter(([fn, x]) => x.closed > 0 && localOnly(fn)).map(([fn]) => fn));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const fn of [...satisfied]) {
+      if (openSites.some((o) => o.target === fn && !(o.inside && satisfied.has(o.inside)))) { satisfied.delete(fn); changed = true; }
+    }
+  }
+  for (const { u, fn } of wrapperBodies) if (!satisfied.has(fn)) unresolved.push(u);
 
   // After a syntax error the parser's recovery can swallow calls. Recover literal-name calls from the
   // raw text after the first error, as weak (ambiguous, link-only) call sites.
