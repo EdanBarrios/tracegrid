@@ -27,6 +27,7 @@ export function groupFunctions(rows) {
       out.set(key, g);
     }
     g.signatures.push(r.signature);
+    if (r.grantsUncertain) g.grantsUncertain ||= r.grantsUncertain;
     g.securityDefiner ||= !!r.securityDefiner;
     g.anon ||= !!r.anon;
     g.authenticated ||= !!r.authenticated;
@@ -45,7 +46,7 @@ export function fromMigrations(st) {
     for (const ov of f.sigs.values()) {
       rows.push({ name: f.name, arity: arityOf(ov.sig), signature: `${f.name}(${ov.sig})`, args: ov.args, returns: ov.returns, kind: ov.kind,
         securityDefiner: ov.securityDefiner, anon: canExec(ov.grants, 'anon', m), authenticated: canExec(ov.grants, 'authenticated', m),
-        body: ov.body, at: loc(ov) });
+        body: ov.body, at: loc(ov), ...(ov.grantsUncertain ? { grantsUncertain: ov.grantsUncertain } : {}) });
     }
   }
   const grantsOf = (g) => ({ anon: tablePrivs(g, 'anon', m), authenticated: tablePrivs(g, 'authenticated', m) });
@@ -54,12 +55,12 @@ export function fromMigrations(st) {
     model: st.model,
     tables: [...st.tables.values()].map((t) => ({
       name: t.name, schema: schemaOf(t.name), rls: t.rls, external: !!t.external, text: t.text, indexText: t.indexText || '', at: loc(t),
-      partition: !!t.partition, rlsUncertain: t.rlsUncertain || st.rlsUncertain || undefined,
+      partition: !!t.partition, rlsUncertain: t.rlsUncertain || st.rlsUncertain || undefined, grantsUncertain: t.grantsUncertain || undefined,
       // External tables (created outside migrations) have unknown grants.
       grants: t.external ? null : grantsOf(t.grants),
       policies: [...t.policies.values()].map((p) => ({ name: p.name, command: p.command, roles: p.roles, permissive: !p.restrictive, text: p.text, at: loc(p) })),
     })),
-    views: [...st.views.values()].map((v) => ({ name: v.name, schema: schemaOf(v.name), securityInvoker: v.securityInvoker, materialized: v.materialized, text: v.text, grants: grantsOf(v.grants), at: loc(v) })),
+    views: [...st.views.values()].map((v) => ({ name: v.name, schema: schemaOf(v.name), securityInvoker: v.securityInvoker, materialized: v.materialized, text: v.text, grants: grantsOf(v.grants), at: loc(v), grantsUncertain: v.grantsUncertain || undefined })),
     functions: groupFunctions(rows),
     members: Object.fromEntries([...m].map(([k, v]) => [k, [...v]])),
     triggers: [...st.triggers.values()].map((t) => ({ name: t.name, table: t.table, fn: t.fn, text: t.text || '', at: loc(t) })),

@@ -563,6 +563,9 @@ export function applyStatement(st, s, file) {
     const privs = tablePrivList(m[3]);
     const roles = parseRoles(m[8]);
     const grant = m[1].toLowerCase() === 'grant';
+    // A column-level GRANT (`select (a, b)`) lets the role use the table through those columns, so it
+    // counts as a table privilege here. A column-level REVOKE leaves table-level privileges alone.
+    if (!grant && /\(/.test(m[3])) return void st.stats.handled++;
     let objs;
     if (m[4]) {
       const schemas = splitTop(m[5]).map((x) => normName(x.trim()));
@@ -662,6 +665,7 @@ function doBlock(st, body, loc, file) {
   const report = (text, why) => {
     const risky = RISKY_RE.test(text);
     st.unparsed.push({ ...loc, reason: why, text: short(text), risky });
+    markUncertain(st, text, `${loc.file}:${loc.line}`);
     if (/row\s+level\s+security/i.test(text)) {
       const t = new RegExp(String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?` + QNAME + String.raw`\s`, 'i').exec(text);
       const name = t && !t[1].includes('%') ? normName(t[1]) : null;
@@ -678,7 +682,7 @@ function doBlock(st, body, loc, file) {
       if (!args || !args.length || args[0].lit == null) return null;
       const vals = args.slice(1).map((a) => {
         if (a.lit != null) return a.lit;
-        const v = /^(?:quote_ident\s*\(\s*)?([A-Za-z_]\w*)\s*\)?$/i.exec(a.raw);
+        const v = /^(?:quote_ident\s*\(\s*)?([A-Za-z_]\w*)(?:\.\w+)?(?:\s*::\s*\w+)*\s*\)?$/i.exec(a.raw);
         return v && bind && bind.has(v[1].toLowerCase()) ? bind.get(v[1].toLowerCase()) : undefined;
       });
       if (vals.some((v) => v === undefined)) return null;
@@ -690,8 +694,26 @@ function doBlock(st, body, loc, file) {
   };
   let rest = body;
   if (dynamic) {
+    // FOR r IN SELECT ... FROM pg_proc ... WHERE proname IN ('a', 'b') LOOP EXECUTE format('revoke execute on
+    // function %s from anon', r.oid::regprocedure); END LOOP: with a literal name list each EXECUTE is
+    // applied once per name (every overload); otherwise the functions it could touch are marked uncertain.
+    const procRe = /\bfor\s+([A-Za-z_]\w*)\s+in\s+(select\b[\s\S]*?\bpg_(?:catalog\s*\.\s*)?proc\b[\s\S]*?)\bloop\b([\s\S]*?)\bend\s+loop\b/gi;
+    rest = rest.replace(procRe, (all, v, query, loopBody) => {
+      const names = procNames(query);
+      const at = `${loc.file}:${loc.line}`;
+      for (const ex of maskStrings(loopBody).matchAll(/\bexecute\b/gi)) {
+        const outs = names && names.list ? names.list.map((n) => expand(loopBody, ex.index, new Map([[v.toLowerCase(), n]]))) : null;
+        if (outs && outs.length && outs.every((x) => x != null)) { for (const sql of outs) apply(sql, `EXECUTE in a loop over pg_proc rows named ${names.list.length} literal name(s)`); continue; }
+        const text = loopBody.slice(ex.index, ex.index + 200);
+        st.unparsed.push({ ...loc, reason: 'dynamic SQL (EXECUTE) in a loop over pg_proc rows with a non-literal name list', text: short(text), risky: RISKY_RE.test(text) });
+        if (/\b(grant|revoke)\b/i.test(loopBody)) {
+          for (const f of st.functions.values()) if (!names || !names.test || names.test(f.name.split('.').pop())) for (const ov of f.sigs.values()) ov.grantsUncertain ||= at;
+        }
+      }
+      return all.replace(/[^\n]/g, ' ');
+    });
     const loopRe = /\b(?:foreach\s+([A-Za-z_]\w*)\s+in\s+array\s+(?:array\s*)?\[([^\]]*)\](?:\s*::\s*[\w\s]+\[\])?|for\s+([A-Za-z_]\w*)\s+in\s+(?:select\s+)?unnest\s*\(\s*(?:array\s*)?\[([^\]]*)\]\s*(?:::\s*[\w\s]+\[\])?\s*\))\s+loop\b([\s\S]*?)\bend\s+loop\b/gi;
-    rest = body.replace(loopRe, (all, v1, list1, v2, list2, loopBody) => {
+    rest = rest.replace(loopRe, (all, v1, list1, v2, list2, loopBody) => {
       const v = (v1 || v2).toLowerCase();
       const items = splitTop(list1 || list2).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim()));
       const literal = items.length && items.every(Boolean);
@@ -719,6 +741,54 @@ function doBlock(st, body, loc, file) {
       applyStatement(st, { ...inner, text: inner.text, outer: inner.outer.slice(off), line: loc.line + inner.line - 1 }, file);
     } else if (/\bcron\s*\.\s*(schedule|unschedule)/i.test(inner.text)) handleCron(st, inner.text, loc);
   }
+}
+
+/**
+ * Names a pg_proc query selects: { list } for `proname = 'a'` / `proname in ('a','b')` /
+ * `proname = any(array['a','b'])`, { test } for `proname like 'x%'`, or null when unknown.
+ */
+function procNames(query) {
+  const q = query.replace(/\s+/g, ' ');
+  let m;
+  if ((m = /\bproname\s*=\s*'((?:[^']|'')*)'/i.exec(q))) return { list: [m[1].replace(/''/g, "'")] };
+  if ((m = /\bproname\s+in\s*\(([^()]*)\)/i.exec(q)) || (m = /\bproname\s*=\s*any\s*\(\s*(?:array\s*)?\[([^\]]*)\]/i.exec(q))) {
+    const items = splitTop(m[1]).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim()));
+    if (items.length && items.every(Boolean)) return { list: items.map((x) => x[1].replace(/''/g, "'")) };
+  }
+  if ((m = /\bproname\s+(i?like)\s+'((?:[^']|'')*)'/i.exec(q))) {
+    let src = '';
+    const pat = m[2].replace(/''/g, "'");
+    for (let i = 0; i < pat.length; i++) {
+      const c = pat[i];
+      if (c === '\\' && i + 1 < pat.length) src += pat[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // LIKE's default escape
+      else if (c === '%') src += '.*';
+      else if (c === '_') src += '.';
+      else src += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    const re = new RegExp('^' + src + '$', m[1].toLowerCase() === 'ilike' ? 'i' : '');
+    return { test: (n) => re.test(n) };
+  }
+  return null;
+}
+
+/**
+ * Dynamic SQL that grants or revokes, but whose text is not known: mark the tables / functions it
+ * may touch (or all existing ones, when the target is not literal) so findings about their
+ * exposure are reported with low confidence instead of as certain.
+ */
+function markUncertain(st, text, at) {
+  if (!/\b(grant|revoke)\b/i.test(text)) return;
+  const t = text.replace(/\s+/g, ' ');
+  if (/\bon\s+(schema|sequence|sequences|all\s+sequences|database|type|domain|language|large\s+object|foreign|tablespace)\b/i.test(t)) return;
+  const onFn = /\bon\s+(?:all\s+)?(?:function|functions|procedure|procedures|routine|routines)\b/i.test(t);
+  if (onFn || !/\bon\b/i.test(t)) {
+    for (const f of st.functions.values()) for (const ov of f.sigs.values()) ov.grantsUncertain ||= at;
+    if (onFn) return;
+  }
+  const m = new RegExp(String.raw`\bon\s+(?:table\s+)?` + QNAME + String.raw`\s+(?:to|from)\b`, 'i').exec(t);
+  const name = m && !m[1].includes('%') ? normName(m[1]) : null;
+  const objs = name ? [st.tables.get(name) || st.views.get(name)].filter(Boolean) : [...st.tables.values(), ...st.views.values()];
+  for (const o of objs) o.grantsUncertain ||= at;
 }
 
 function handleCron(st, text, loc) {
@@ -845,9 +915,10 @@ function scanCalls(t, cb) {
  * Function names (normalised, as in `fnNames`) and edge-function URLs referenced in a chunk of SQL.
  * `schema.f()` resolves only to that schema; an unqualified `f()` resolves to public (and to
  * `ownSchema` for code inside a function of another schema). Quoted names keep their case.
- * Names inside string literals count only when the string is itself a statement run by EXECUTE.
+ * Names inside string literals count only when the string is itself a statement run by EXECUTE
+ * (or, with `allStrings`, in any string of text that runs EXECUTE: format() fragments).
  */
-export function sqlRefs(text, fnNames, ownSchema = 'public') {
+export function sqlRefs(text, fnNames, ownSchema = 'public', { allStrings = false } = {}) {
   const fns = new Set();
   const edges = new Set();
   text = text.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
@@ -860,7 +931,7 @@ export function sqlRefs(text, fnNames, ownSchema = 'public') {
   if (/\bexecute\b/i.test(text)) {
     for (const s of text.matchAll(/'((?:[^']|'')*)'/g)) {
       const inner = s[1].replace(/''/g, "'");
-      if (STATEMENT_START.test(inner)) scanCalls(inner, hit);
+      if (allStrings || STATEMENT_START.test(inner)) scanCalls(inner, hit);
     }
   }
   return { fns, edges };
