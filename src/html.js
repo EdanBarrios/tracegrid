@@ -111,7 +111,7 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
 const CSS = String.raw`
 /* ===== THEME: every colour, stroke, radius, size and font, for the 2D views and the 3D view. Swap this block to restyle. =====
    Structure (fonts, sizes, strokes) is in :root. Colour comes from the active colourway, set as data-colorway on <html>
-   (default graphite-amber), in a dark and a light variant (data-theme). Severity never rests on colour alone: the
+   (default signal), in a dark and a light variant (data-theme). Severity never rests on colour alone: the
    glyphs ◆ Fix, ◇ Review and · Info always accompany it. The script reads the 3D palette from the same variables. */
 :root{
 --font:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
@@ -120,7 +120,7 @@ const CSS = String.raw`
 --arrow:7;--node-w:1.25;--edge-w:1.5;--edge-w-hi:2;
 --box-w:200;--box-h:36;--box-gap:14;--gutter:104;--map-r:5;--map-role-r:8;--map-group-r:20;
 }
-/* graphite-amber (default) */
+/* graphite-amber (also the CSS fallback when no data-colorway is set) */
 :root,:root[data-colorway=graphite-amber]{
 --bg:#0a0a0b;--grid:rgba(255,255,255,.03);--panel:#111113;--panel2:#18181b;--fg:#e9e7e2;--muted:#9a978f;--line:#26262a;--line2:#3a3a40;
 --node:#cfcdc7;--node-fill:#0f0f11;--edge:#7d7b76;--edge-hi:#f2f0ea;--edge-label:#a8a59d;

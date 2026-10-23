@@ -189,11 +189,11 @@ function. With `autoEntryPoints` (default on), `verify_jwt = false` functions ar
 
 ## Colourways
 
-`graph.html` ships four colourways, each with a dark and a light variant: `graphite-amber` (the
-default), `signal` (the earlier red and amber), `mono` and `mint`. Severity is never colour alone:
+`graph.html` ships four colourways, each with a dark and a light variant: `signal` (the
+default: red and amber), `graphite-amber` (soft gold and slate), `mono` and `mint`. Severity is never colour alone:
 the glyphs ◆ Fix, ◇ Review and · Info always go with it. Pick one in the page (gear button in the
 sidebar: colourway, light / dark / auto, auto-rotate for the 3D tab; saved in the browser's
-localStorage), with `?colorway=signal` on the URL (beats the saved choice), or set the default baked
+localStorage), with `?colorway=mono` on the URL (beats the saved choice), or set the default baked
 into the file with `"colorway": "mint"` in `tracegrid.config.json` or `--colorway mint` (the flag wins).
 Unknown names fail with the list of valid ones. The palettes are the THEME block at the top of
 `src/html.js`.

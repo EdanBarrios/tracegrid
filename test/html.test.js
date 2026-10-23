@@ -113,13 +113,13 @@ test('3D tab has an overview button, an Esc handler and a breadcrumb', () => {
   assert.match(h, /addEventListener\('dblclick'/);
 });
 
-test('colourways: graphite-amber is the default, all four are defined with a light variant, and the 3D palette follows them', () => {
-  assert.equal(DEFAULT_COLORWAY, 'graphite-amber');
+test('colourways: signal is the default, all four are defined with a light variant, and the 3D palette follows them', () => {
+  assert.equal(DEFAULT_COLORWAY, 'signal');
   assert.deepEqual(COLORWAYS, ['graphite-amber', 'signal', 'mono', 'mint']);
   const h = renderHtml(hostile());
-  assert.match(h, /<html lang="en" data-colorway="graphite-amber" data-theme="dark">/);
+  assert.match(h, /<html lang="en" data-colorway="signal" data-theme="dark">/);
   const d = JSON.parse(scripts(h).json);
-  assert.equal(d.colorway, 'graphite-amber');
+  assert.equal(d.colorway, 'signal');
   assert.deepEqual(d.colorways, COLORWAYS);
   const css = /<style>([\s\S]*?)<\/style>/.exec(h)[1];
   const theme = css.slice(css.indexOf('THEME'), css.indexOf('end THEME'));
@@ -155,12 +155,12 @@ test('colourways: ?colorway= beats storage beats the baked-in default, and every
   const end = code.indexOf('var mq=null');
   const body = code.slice(start, end);
   const run = (search, store) => new Function('window', 'location', 'D', `${body}; return look;`)(
-    { localStorage: store }, { search }, { colorways: COLORWAYS, colorway: 'graphite-amber' });
+    { localStorage: store }, { search }, { colorways: COLORWAYS, colorway: 'signal' });
   const boom = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
-  assert.equal(run('', boom).colorway, 'graphite-amber');
+  assert.equal(run('', boom).colorway, 'signal');
   assert.equal(run('?colorway=signal', boom).colorway, 'signal');
-  assert.equal(run('?colorway=nope', boom).colorway, 'graphite-amber');
-  assert.equal(run('?colorway=<script>', boom).colorway, 'graphite-amber');
+  assert.equal(run('?colorway=nope', boom).colorway, 'signal');
+  assert.equal(run('?colorway=<script>', boom).colorway, 'signal');
   const mem = { m: { 'tracegrid.colorway': 'mint', 'tracegrid.rotate': '0' }, getItem(k) { return this.m[k] ?? null; }, setItem() {} };
   const l = run('', mem);
   assert.equal(l.colorway, 'mint');
