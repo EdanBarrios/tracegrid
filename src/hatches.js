@@ -7,18 +7,20 @@
 //
 // `ignore` and `entry-point` silence findings, so they need a reason. `names` only adds facts.
 
-const RE = /(?:\/\/|--|\/\*|^\s*\*)\s*supareach:\s*([a-z-]+)(?:[ \t]+(.*?))?\s*(?:\*\/\s*)?$/;
+// Linear: no lazy group followed by optional trailing whitespace (that backtracked on long lines).
+const RE = /(?:\/\/|--|\/\*|^\s*\*)\s*supareach:\s*([a-z-]+)(?:[ \t]+([^\n]*))?$/;
 export const DIRECTIVES = ['names', 'ignore', 'entry-point'];
 
 /** @returns {{ line: number, directive: string, args: string, error?: string, rule?: string, reason?: string, names?: string[] }[]} */
 export function parseHatches(text) {
   const out = [];
   if (!text.includes('supareach:')) return out;
-  const lines = text.split('\n');
+  const lines = text.split(/\r\n|\r|\n/);
   for (let i = 0; i < lines.length; i++) {
-    const m = RE.exec(lines[i]);
+    if (!lines[i].includes('supareach:')) continue;
+    const m = RE.exec(lines[i].length > 4096 ? lines[i].slice(0, 4096) : lines[i]);
     if (!m) continue;
-    const h = { line: i + 1, directive: m[1], args: (m[2] || '').trim() };
+    const h = { line: i + 1, directive: m[1], args: (m[2] || '').replace(/\*\/\s*$/, '').trim() };
     if (!DIRECTIVES.includes(h.directive)) h.error = `unknown directive "${h.directive}" (expected ${DIRECTIVES.join(', ')})`;
     else if (h.directive === 'names') {
       h.names = h.args.split(/[\s,]+/).filter(Boolean);

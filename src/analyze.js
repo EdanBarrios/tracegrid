@@ -156,27 +156,88 @@ export async function analyze(root, opts = {}) {
   for (const c of catalog.cron) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: c.at, ...(c.active === false ? { active: false } : {}) });
   for (const b of catalog.buckets || []) node(`bucket:${b.name}`, 'bucket', b.name, { public: b.public });
 
-  // Code edges
+  // Code edges. Calls through a service_role / secret-key client get a `-service` relation: they are
+  // callers, but they bypass grants and RLS, so they neither justify an anon/authenticated grant nor
+  // make a table "client-touched". Calls on a receiver that may not be Supabase (`weak`) only link to
+  // objects that exist and never create missing-* findings.
   const invoked = new Map();
   const buckets = new Map();
   const push = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
+  const rel = (base, c) => (c.privileged ? `${base}-service` : base);
+  const fnByBare = new Map();
+  for (const f of catalog.functions) { const b = f.name.split('.').pop(); if (!fnByBare.has(b)) fnByBare.set(b, []); fnByBare.get(b).push(`fn:${f.key}`); }
+  const tableExists = (n) => nodes.has(`table:${n}`) && !nodes.get(`table:${n}`).missing;
+  const selects = [];
   for (const c of code.calls) {
     const caller = callerOf(c.file);
-    if (caller.id.startsWith('file:')) node(caller.id, 'file', c.file, { side: caller.side });
     const at = `${c.file}:${c.line}`;
+    const fileNode = () => { if (caller.id.startsWith('file:')) node(caller.id, 'file', c.file, { side: caller.side }); };
+    if (c.kind === 'select') { selects.push({ c, caller, at }); continue; }
     if (c.kind === 'rpc') {
-      for (const t of fnTargets(c.name)) edge(caller.id, t, 'rpc', c.confidence, at);
+      const targets = c.anySchema ? (fnByBare.get(c.name.split('.').pop()) || []) : (c.weak ? fnIdsByName.get(c.name) || [] : fnTargets(c.name));
+      if (targets.length) fileNode();
+      for (const t of targets) edge(caller.id, t, rel('rpc', c), c.weak ? 'ambiguous' : c.confidence, at);
     } else if (c.kind === 'table') {
+      if (c.weak || c.anySchema) {
+        if (!tableExists(c.name)) continue;
+        fileNode();
+        edge(caller.id, `table:${c.name}`, 'from-weak', 'ambiguous', at, c.op);
+        continue;
+      }
+      fileNode();
       if (!nodes.has(`table:${c.name}`)) node(`table:${c.name}`, 'table', c.name, { schema: schemaOf(c.name), missing: true });
-      edge(caller.id, `table:${c.name}`, 'from', c.confidence, at, c.op);
+      edge(caller.id, `table:${c.name}`, rel('from', c), c.confidence, at, c.op);
     } else if (c.kind === 'invoke') {
+      fileNode();
       if (!nodes.has(`edge:${c.name}`)) node(`edge:${c.name}`, 'edge_function', c.name, { missing: true });
-      edge(caller.id, `edge:${c.name}`, 'invoke', c.confidence, at);
+      edge(caller.id, `edge:${c.name}`, rel('invoke', c), c.confidence, at);
       push(invoked, c.name, at);
     } else if (c.kind === 'bucket') {
+      fileNode();
       if (!nodes.has(`bucket:${c.name}`)) node(`bucket:${c.name}`, 'bucket', c.name, catalog.buckets ? { missing: true } : {});
-      edge(caller.id, `bucket:${c.name}`, 'storage', c.confidence, at, c.op);
+      edge(caller.id, `bucket:${c.name}`, rel('storage', c), c.confidence, at, c.op);
       push(buckets, c.name, at);
+    }
+  }
+  // PostgREST select(): embedded relations are table reads; computed fields and computed
+  // relationships are functions taking the row type (`f(people)`), called by name.
+  const fnArgsMention = (id, table) => { const n = nodes.get(id); return !!n && n.arity === 1 && new RegExp(String.raw`(^|[\s."])` + table.split('.').pop() + String.raw`("|\s|$|\[)`, 'i').test(n.args || ''); };
+  for (const { c, caller, at } of selects) {
+    const q = c.schema && c.schema !== 'public' && c.schema !== '*' ? `${c.schema}.` : '';
+    const name = q + c.name;
+    const fns = (fnIdsByName.get(name) || []).filter((id) => (c.base ? fnArgsMention(id, c.base) : nodes.get(id).arity === 1));
+    if (c.embed && tableExists(name)) {
+      if (caller.id.startsWith('file:')) node(caller.id, 'file', c.file, { side: caller.side });
+      edge(caller.id, `table:${name}`, rel('from', c), 'inferred', at, 'embed');
+    } else if (fns.length) {
+      if (caller.id.startsWith('file:')) node(caller.id, 'file', c.file, { side: caller.side });
+      for (const t of fns) edge(caller.id, t, rel('rpc', c), 'inferred', at);
+    }
+  }
+  // Dynamic names with a known shape (`fn_${x}`, `'report-' + kind`): ambiguous links to every match.
+  for (const u of code.unresolved) {
+    if (!u.pattern) continue;
+    const re = new RegExp(u.pattern);
+    const caller = callerOf(u.file);
+    const targets = u.kind === 'rpc' ? catalog.functions.filter((f) => re.test(f.name.split('.').pop())).map((f) => `fn:${f.key}`)
+      : u.kind === 'invoke' ? edgeFns.filter((e) => re.test(e.name)).map((e) => `edge:${e.name}`) : [];
+    if (targets.length && caller.id.startsWith('file:')) node(caller.id, 'file', u.file, { side: caller.side });
+    for (const t of targets) edge(caller.id, t, u.kind === 'rpc' ? 'rpc' : 'invoke', 'ambiguous', `${u.file}:${u.line}`);
+  }
+  // Auth hooks in config.toml call a Postgres function (pg-functions://) or an edge function (HTTP).
+  const hooks = [];
+  for (const [hname, h] of Object.entries((project.toml && project.toml.auth && project.toml.auth.hook) || {})) {
+    if (!h || typeof h.uri !== 'string' || h.enabled === false) continue;
+    const pg = /^pg-functions:\/\/[^/]+\/([^/]+)\/([^/?#]+)/.exec(h.uri);
+    const http = /\/functions\/v1\/([A-Za-z0-9_-]+)/.exec(h.uri);
+    const at = `${project.configToml}:[auth.hook.${hname}]`;
+    if (pg) {
+      const name = pg[1] === 'public' ? pg[2] : `${pg[1]}.${pg[2]}`;
+      for (const t of fnIdsByName.get(name) || []) { node('external:auth', 'external', 'Supabase Auth hooks'); edge('external:auth', t, 'auth-hook', 'extracted', at); hooks.push({ hook: hname, node: t }); }
+    } else if (http) {
+      node('external:auth', 'external', 'Supabase Auth hooks');
+      if (!nodes.has(`edge:${http[1]}`)) node(`edge:${http[1]}`, 'edge_function', http[1], { missing: true });
+      edge('external:auth', `edge:${http[1]}`, 'auth-hook', 'extracted', at);
     }
   }
 
@@ -220,7 +281,7 @@ export async function analyze(root, opts = {}) {
   // Findings
   const graph = makeGraph([...nodes.values()], [...edges.values()]);
   const suppress = makeSuppressor(cfg, [...code.hatches.suppress, ...sql.hatches.suppress]);
-  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root, unresolved: code.unresolved }, suppress);
+  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root, unresolved: code.unresolved, hooks }, suppress);
 
   const info = {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),

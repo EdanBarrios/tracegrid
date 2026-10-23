@@ -13,6 +13,8 @@ function clientTables(graph) {
 /** Can anon or authenticated reach the relation at all? Unknown grants count as reachable. */
 const reachable = (n) => !Array.isArray(n.clientPrivs) || n.clientPrivs.length > 0;
 const callers = (graph, id) => graph.incoming(id).filter((e) => e.source !== id);
+/** Callers that justify a grant to anon/authenticated: everything except service_role / secret-key clients. */
+const roleCallers = (graph, id) => callers(graph, id).filter((e) => !e.relation.endsWith('-service'));
 const exposed = (config) => new Set(config.exposedSchemas || ['public']);
 /** Functions in an exposed schema that anon or authenticated can execute. */
 const grantedFunctions = (graph, config) => graph.nodes.filter((n) => n.type === 'function' && !n.missing && n.kind === 'function'
@@ -47,8 +49,13 @@ export const coreRules = [
     title: 'Functions callable by anon/authenticated that nothing calls',
     why: 'No `.rpc()` in code, and no cron job, trigger, policy, view or other SQL function references them. Each is surface any signed-in (or anonymous) user can call through the Data API. Revoke the grant, or ignore it with a reason if a caller is coming.',
     run({ graph, config, unresolved }) {
-      return grantedFunctions(graph, config).filter((n) => callers(graph, n.id).length === 0)
-        .map((n) => caveat(severity(fnFinding(n), n), couldReach(unresolved, 'rpc', n.label.split('.').pop()), '.rpc()'));
+      return grantedFunctions(graph, config).filter((n) => roleCallers(graph, n.id).length === 0)
+        .map((n) => {
+          const svc = callers(graph, n.id).filter((e) => e.relation.endsWith('-service'));
+          const f = severity(fnFinding(n), n);
+          if (svc.length) f.note = [f.note, `called only through a service_role/secret-key client (${svc[0].at[0]}), which does not need the anon/authenticated grant`].filter(Boolean).join('; ');
+          return caveat(f, couldReach(unresolved, 'rpc', n.label.split('.').pop()), '.rpc()');
+        });
     },
   },
   {
@@ -58,8 +65,8 @@ export const coreRules = [
     why: 'No `.rpc()` in code calls these, but a policy, view, trigger, cron job or other SQL function does. They are still callable directly through the Data API. A helper used by RLS policies or invoker views needs the grant; one used only by cron, triggers or SECURITY DEFINER functions usually does not.',
     run({ graph, config }) {
       return grantedFunctions(graph, config)
-        .map((n) => ({ n, inc: callers(graph, n.id) }))
-        .filter(({ inc }) => inc.length && !inc.some((e) => e.relation === 'rpc'))
+        .map((n) => ({ n, inc: roleCallers(graph, n.id) }))
+        .filter(({ inc }) => inc.length && !inc.some((e) => e.relation === 'rpc' || e.relation === 'auth-hook'))
         .map(({ n, inc }) => {
           const usedBy = [...new Set(inc.map((e) => e.relation))].sort();
           // Does any caller run it as the requesting role? Policies, views, defaults, index expressions,
@@ -116,6 +123,16 @@ export const coreRules = [
       return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
         .filter(({ n }) => n && n.type === 'table' && !n.missing && n.rls && !(n.clientPolicies ?? n.policies) && reachable(n))
         .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites }));
+    },
+  },
+  {
+    id: 'auth-hook-function-exposed',
+    level: 'warning',
+    title: 'Auth hook functions callable by anon/authenticated',
+    why: 'Supabase Auth calls these Postgres functions (`[auth.hook.*]` in config.toml) as supabase_auth_admin; clients should not. Revoke EXECUTE from anon, authenticated and public, and grant it to supabase_auth_admin only.',
+    run({ graph, hooks = [] }) {
+      return hooks.map((h) => graph.node(h.node)).filter((n) => n && (n.anon || n.authenticated))
+        .map((n) => fnFinding(n, { message: `revoke execute on function ${n.label}(${n.args || ''}) from anon, authenticated, public` }));
     },
   },
   {
