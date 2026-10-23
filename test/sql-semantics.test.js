@@ -456,3 +456,35 @@ test('R3 column-level grants count as table privileges; a column list built in a
   const f = b.findings.find((x) => x.rule === 'client-table-not-granted');
   assert.ok(f && f.confidence === 'low' && f.tier === 'review', JSON.stringify(f));
 });
+
+test('R2b nested loops: FOREACH over a declared array, then pg_proc rows by that name (definer overloads only)', async () => {
+  const r = await run(`
+    create function public.alpha() returns void language sql security definer as $$ select 1 $$;
+    create function public.alpha(x int) returns void language sql as $$ select 1 $$;
+    create function public.beta(t text) returns void language sql security definer as $$ select 1 $$;
+    create function public.gamma() returns void language sql security definer as $$ select 1 $$;
+    do $$
+    declare
+      revoked text[] := array[
+        -- a comment inside the list
+        'alpha',
+        'beta'
+      ];
+      name text;
+      fn regprocedure;
+    begin
+      foreach name in array revoked loop
+        for fn in select p.oid::regprocedure from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+          where ns.nspname = 'public' and p.proname = name and p.prosecdef
+        loop
+          execute format('revoke execute on function %s from public, anon, authenticated', fn);
+        end loop;
+      end loop;
+    end $$;`);
+  const uncalled = ids(r, 'exposed-uncalled-function');
+  assert.ok(!uncalled.includes('alpha/0') && !uncalled.includes('beta/1'), uncalled.join(','));
+  assert.ok(uncalled.includes('alpha/1'), 'the non-definer overload is not revoked');
+  assert.ok(uncalled.includes('gamma/0'));
+  assert.equal(r.findings.find((f) => f.id === 'gamma/0').tier, 'fix');
+  assert.ok(!r.info.unparsed_sql.length, JSON.stringify(r.info.unparsed_sql));
+});

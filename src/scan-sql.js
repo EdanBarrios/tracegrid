@@ -656,6 +656,16 @@ const DDL_RE = /\b(create\s+(or\s+replace\s+)?(policy|function|procedure|table|v
 function doBlock(st, body, loc, file) {
   const dynamic = /\bexecute\b/i.test(body);
   if (dynamic) st.dynamic.push({ text: body, ...loc });
+  // Array variables declared with a literal value: `revoked text[] := array['a', 'b'];`
+  const declared = new Map();
+  for (const d of maskStrings(body).matchAll(/\b([A-Za-z_]\w*)\s+(?:text|name|varchar|regproc|regprocedure|character\s+varying)\s*\[\]\s*(?::=|=|default)\s*(?:array\s*)?\[/gi)) {
+    const open = d.index + d[0].length - 1;
+    let k = open, depthB = 0;
+    for (; k < body.length; k++) { const c = body[k]; if (c === "'") { k = body.indexOf("'", k + 1); while (k > 0 && body[k + 1] === "'") k = body.indexOf("'", k + 2); if (k < 0) break; continue; } if (c === '[') depthB++; else if (c === ']' && --depthB === 0) break; }
+    if (k < 0 || k >= body.length) continue;
+    const items = splitTop(body.slice(open + 1, k).replace(/--[^\n]*/g, ' ')).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim()));
+    if (items.length && items.every(Boolean)) declared.set(d[1].toLowerCase(), items.map((x) => x[1].replace(/''/g, "'")));
+  }
   const apply = (sql, how) => {
     for (const inner of splitStatements(sql)) {
       st.dynamicApplied.push({ ...loc, text: short(inner.text), how });
@@ -693,38 +703,88 @@ function doBlock(st, body, loc, file) {
     return null;
   };
   let rest = body;
-  if (dynamic) {
-    // FOR r IN SELECT ... FROM pg_proc ... WHERE proname IN ('a', 'b') LOOP EXECUTE format('revoke execute on
-    // function %s from anon', r.oid::regprocedure); END LOOP: with a literal name list each EXECUTE is
-    // applied once per name (every overload); otherwise the functions it could touch are marked uncertain.
-    const procRe = /\bfor\s+([A-Za-z_]\w*)\s+in\s+(select\b[\s\S]*?\bpg_(?:catalog\s*\.\s*)?proc\b[\s\S]*?)\bloop\b([\s\S]*?)\bend\s+loop\b/gi;
-    rest = rest.replace(procRe, (all, v, query, loopBody) => {
-      const names = procNames(query);
+  if (dynamic) rest = loops(body, new Map());
+
+  /**
+   * Expand loops (nested ones included) whose iteration values are known, applying each EXECUTE once
+   * per value with the loop variables bound; returns `src` with every loop blanked out.
+   *   FOREACH v IN ARRAY array['a','b'] | <declared array variable> LOOP ... END LOOP
+   *   FOR v IN SELECT unnest(array['a','b']) LOOP ... END LOOP
+   *   FOR r IN SELECT ... FROM pg_proc ... WHERE proname IN ('a','b') | = <bound variable> LOOP
+   *     EXECUTE format('revoke execute on function %s ...', r.oid::regprocedure); END LOOP
+   * A pg_proc loop binds the variable to each matching overload's signature (definer-only when the
+   * query filters on prosecdef). Anything else is reported; grants it may change become uncertain.
+   */
+  function loops(src, bind, depth = 0) {
+    const masked = maskStrings(src);
+    const head = /\b(?:foreach\s+([A-Za-z_]\w*)\s+in\s+array\s+([\s\S]*?)|for\s+([A-Za-z_]\w*)\s+in\s+(?!reverse\b)([\s\S]*?))\s+loop\b/gi;
+    let out = src;
+    let m;
+    while ((m = head.exec(masked))) {
+      // The matching END LOOP, counting nested loops.
+      const tok = /\bend\s+loop\b|\bloop\b/gi;
+      tok.lastIndex = m.index + m[0].length;
+      let d = 1, t;
+      while (d && (t = tok.exec(masked))) d += /^end/i.test(t[0]) ? -1 : 1;
+      if (d) break;
+      const bodyStart = m.index + m[0].length, bodyEnd = t.index, whole = [m.index, t.index + t[0].length];
+      head.lastIndex = whole[1];
+      const loopBody = src.slice(bodyStart, bodyEnd);
+      const v = (m[1] || m[3]).toLowerCase();
+      const expr = src.slice(m.index, bodyStart).replace(/^\s*(?:foreach|for)\s+[A-Za-z_]\w*\s+in\s+(?:array\s+)?/i, '').replace(/\s+loop\s*$/i, '');
+      const items = loopItems(m[1] ? 'array' : 'query', expr, bind);
       const at = `${loc.file}:${loc.line}`;
-      for (const ex of maskStrings(loopBody).matchAll(/\bexecute\b/gi)) {
-        const outs = names && names.list ? names.list.map((n) => expand(loopBody, ex.index, new Map([[v.toLowerCase(), n]]))) : null;
-        if (outs && outs.length && outs.every((x) => x != null)) { for (const sql of outs) apply(sql, `EXECUTE in a loop over pg_proc rows named ${names.list.length} literal name(s)`); continue; }
-        const text = loopBody.slice(ex.index, ex.index + 200);
-        st.unparsed.push({ ...loc, reason: 'dynamic SQL (EXECUTE) in a loop over pg_proc rows with a non-literal name list', text: short(text), risky: RISKY_RE.test(text) });
-        if (/\b(grant|revoke)\b/i.test(loopBody)) {
-          for (const f of st.functions.values()) if (!names || !names.test || names.test(f.name.split('.').pop())) for (const ov of f.sigs.values()) ov.grantsUncertain ||= at;
+      if (items && items.length && depth < 4) {
+        for (const it of items) {
+          const b = new Map(bind); b.set(v, it);
+          const inner = loops(loopBody, b, depth + 1);
+          for (const ex of maskStrings(inner).matchAll(/\bexecute\b/gi)) {
+            const sql = expand(inner, ex.index, b);
+            if (sql != null) apply(sql, `EXECUTE in a loop over ${items.length} literal value(s)`);
+            else report(inner.slice(ex.index, ex.index + 200), 'dynamic SQL (EXECUTE) with non-literal arguments');
+          }
         }
+      } else if (/\bexecute\b/i.test(maskStrings(loopBody))) {
+        const proc = /\bpg_(?:catalog\s*\.\s*)?proc\b/i.test(expr);
+        const text = loopBody.slice(0, 200);
+        st.unparsed.push({ ...loc, reason: proc ? 'dynamic SQL (EXECUTE) in a loop over pg_proc rows with a non-literal name list' : 'dynamic SQL (EXECUTE) in a loop over a non-literal list', text: short(text), risky: RISKY_RE.test(loopBody) });
+        if (proc && /\b(grant|revoke)\b/i.test(loopBody)) {
+          const names = procNames(expr, bind, declared);
+          for (const f of st.functions.values()) if (!names || !names.test || names.test(f.name.split('.').pop())) for (const ov of f.sigs.values()) ov.grantsUncertain ||= at;
+        } else markUncertain(st, loopBody, at);
+        if (/row\s+level\s+security/i.test(loopBody)) st.rlsUncertain ||= at;
       }
-      return all.replace(/[^\n]/g, ' ');
-    });
-    const loopRe = /\b(?:foreach\s+([A-Za-z_]\w*)\s+in\s+array\s+(?:array\s*)?\[([^\]]*)\](?:\s*::\s*[\w\s]+\[\])?|for\s+([A-Za-z_]\w*)\s+in\s+(?:select\s+)?unnest\s*\(\s*(?:array\s*)?\[([^\]]*)\]\s*(?:::\s*[\w\s]+\[\])?\s*\))\s+loop\b([\s\S]*?)\bend\s+loop\b/gi;
-    rest = rest.replace(loopRe, (all, v1, list1, v2, list2, loopBody) => {
-      const v = (v1 || v2).toLowerCase();
-      const items = splitTop(list1 || list2).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim()));
-      const literal = items.length && items.every(Boolean);
-      for (const ex of maskStrings(loopBody).matchAll(/\bexecute\b/gi)) {
-        if (!literal) { report(loopBody, 'dynamic SQL (EXECUTE) in a loop over a non-literal list'); break; }
-        const outs = items.map((it) => expand(loopBody, ex.index, new Map([[v, it[1].replace(/''/g, "'")]])));
-        if (outs.some((x) => x == null)) report(loopBody.slice(ex.index, ex.index + 200), 'dynamic SQL (EXECUTE) with non-literal arguments');
-        else for (const sql of outs) apply(sql, `EXECUTE in a loop over ${items.length} literal value(s)`);
+      out = out.slice(0, whole[0]) + out.slice(whole[0], whole[1]).replace(/[^\n]/g, ' ') + out.slice(whole[1]);
+    }
+    return out;
+  }
+  /** Values a loop iterates over, or null when they are not known. */
+  function loopItems(kind, expr, bind) {
+    const lits = (list) => { const it = splitTop(list).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim())); return it.length && it.every(Boolean) ? it.map((x) => x[1].replace(/''/g, "'")) : null; };
+    const e = expr.replace(/--[^\n]*/g, ' ').trim();
+    let x;
+    if (kind === 'array') {
+      if ((x = /^(?:array\s*)?\[([\s\S]*)\](?:\s*::\s*[\w\s]+\[\])?$/i.exec(e))) return lits(x[1]);
+      if ((x = /^([A-Za-z_]\w*)$/.exec(e))) return declared.get(x[1].toLowerCase()) || null;
+      return null;
+    }
+    if ((x = /^(?:select\s+)?unnest\s*\(\s*(?:array\s*)?\[([\s\S]*)\]\s*(?:::\s*[\w\s]+\[\])?\s*\)$/i.exec(e))) return lits(x[1]);
+    if ((x = /^(?:select\s+)?unnest\s*\(\s*([A-Za-z_]\w*)\s*\)$/i.exec(e))) return declared.get(x[1].toLowerCase()) || null;
+    if (/^select\b/i.test(e) && /\bpg_(?:catalog\s*\.\s*)?proc\b/i.test(e)) {
+      const names = procNames(e, bind, declared);
+      if (!names || !names.list) return null;
+      const definer = /\bprosecdef\b/i.test(e) ? !/\bnot\s+(?:\w+\.)?prosecdef\b/i.test(e) : null;
+      const ns = /\bnspname\s*=\s*'([^']+)'/i.exec(e);
+      const prefix = ns && ns[1] !== 'public' ? `${ns[1]}.` : '';
+      const out = [];
+      for (const n of names.list) {
+        const f = st.functions.get(normName(prefix + n));
+        if (!f) continue;
+        for (const ov of f.sigs.values()) if (definer == null || !!ov.securityDefiner === definer) out.push(`${f.name}(${ov.sig})`);
       }
-      return all.replace(/[^\n]/g, ' ');
-    });
+      return out;
+    }
+    return null;
   }
   for (const inner of splitStatements(rest)) {
     const t = inner.outer.replace(/\s+/g, ' ');
@@ -747,10 +807,12 @@ function doBlock(st, body, loc, file) {
  * Names a pg_proc query selects: { list } for `proname = 'a'` / `proname in ('a','b')` /
  * `proname = any(array['a','b'])`, { test } for `proname like 'x%'`, or null when unknown.
  */
-function procNames(query) {
-  const q = query.replace(/\s+/g, ' ');
+function procNames(query, bind = new Map(), declared = new Map()) {
+  const q = query.replace(/--[^\n]*/g, ' ').replace(/\s+/g, ' ');
   let m;
   if ((m = /\bproname\s*=\s*'((?:[^']|'')*)'/i.exec(q))) return { list: [m[1].replace(/''/g, "'")] };
+  if ((m = /\bproname\s*=\s*any\s*\(\s*([A-Za-z_]\w*)\s*\)/i.exec(q)) && declared.has(m[1].toLowerCase())) return { list: declared.get(m[1].toLowerCase()) };
+  if ((m = /\bproname\s*(?:=|::\s*text\s*=)\s*([A-Za-z_]\w*)\b(?!\s*[.(])/i.exec(q)) && bind.has(m[1].toLowerCase())) return { list: [bind.get(m[1].toLowerCase())] };
   if ((m = /\bproname\s+in\s*\(([^()]*)\)/i.exec(q)) || (m = /\bproname\s*=\s*any\s*\(\s*(?:array\s*)?\[([^\]]*)\]/i.exec(q))) {
     const items = splitTop(m[1]).map((x) => /^'((?:[^']|'')*)'(?:\s*::\s*\w+)?$/.exec(x.trim()));
     if (items.length && items.every(Boolean)) return { list: items.map((x) => x[1].replace(/''/g, "'")) };
