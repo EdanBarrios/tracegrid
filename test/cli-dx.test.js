@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -68,3 +69,23 @@ test('versions agree; package ships the demo, skill and plugin; SARIF points at 
   assert.equal(s.runs[0].tool.driver.informationUri, 'https://github.com/EdanBarrios/tracegrid');
 });
 
+
+test('--colorway: validated, baked into graph.html as the default, config key too', () => {
+  const bad = run(['--demo', '--no-output', '--colorway', 'neon']);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--colorway must be one of graphite-amber, signal, mono, mint \(got neon\)/);
+  assert.equal(run(['--demo', '--colorway']).status, 2);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-cw-'));
+  assert.equal(run(['--demo', '--colorway', 'mint', '--out', out]).status, 0);
+  assert.match(fs.readFileSync(path.join(out, 'graph.html'), 'utf8'), /<html lang="en" data-colorway="mint"/);
+  const d = project({ 'tracegrid.config.json': JSON.stringify({ colorway: 'neon' }), 'src/a.ts': '' });
+  const c = run([d, '--no-output']);
+  assert.equal(c.status, 2);
+  assert.match(c.stderr, /colorway: unknown colourway "neon" \(expected graphite-amber, signal, mono, mint\)/);
+  fs.writeFileSync(path.join(d, 'tracegrid.config.json'), JSON.stringify({ colorway: 'signal' }));
+  assert.equal(run([d, '--out', out]).status, 0);
+  assert.match(fs.readFileSync(path.join(out, 'graph.html'), 'utf8'), /data-colorway="signal"/);
+  assert.equal(run([d, '--out', out, '--colorway', 'mono']).status, 0);
+  assert.match(fs.readFileSync(path.join(out, 'graph.html'), 'utf8'), /data-colorway="mono"/, 'the flag beats the config');
+  rm(d); rm(out);
+});

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renderHtml, FG3D } from '../src/html.js';
+import { COLORWAYS, DEFAULT_COLORWAY } from '../src/colorways.js';
 
 const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tracegrid.js');
 const EVIL = '</script><img src=x onerror=alert(1)>\u2028\u2029<!--';
@@ -97,7 +98,7 @@ test('graph.html: dashboard by default, arrowed and labelled edges, and the look
   for (const v of ['--font', '--edge', '--edge-w', '--arrow', '--fix', '--review', '--info', '--radius', '--box-w', '--3d-bg', '--3d-node']) assert.ok(theme.includes(v + ':'), v);
   assert.doesNotMatch(css.slice(css.indexOf('end THEME')), /#[0-9a-f]{3,6}\b/i, 'no colour outside the THEME block');
   assert.doesNotMatch(code, /'#[0-9a-f]{3,8}'/i, 'the script reads colours from THEME');
-  for (const p of ['Exposure', 'Reach matrix', 'Biggest holes', 'Findings by rule', 'Top folders by database touchpoints', 'Supabase 2026-10-30 change', 'Coverage']) assert.ok(code.includes(p), p);
+  for (const p of ['Exposure', 'To do \u00b7 fix', 'Reach matrix', 'Findings by rule', 'Top folders', 'Supabase 2026-10-30 change', 'Coverage', 'Since baseline', 'show path', 'Info (']) assert.ok(code.includes(p), p);
   assert.match(code, /'marker-end':'url\(#'/);
   for (const w of ["'calls'", "'invokes'", "'policy uses'", "'triggers'", "'EXECUTE'"]) assert.ok(code.includes(w), w);
   assert.match(code, /linkDirectionalArrowLength/);
@@ -110,4 +111,67 @@ test('3D tab has an overview button, an Esc handler and a breadcrumb', () => {
   assert.match(h, /ev\.key!=='Escape'\|\|state\.view!=='3d'/);
   assert.match(h, /id="three-crumb"/);
   assert.match(h, /addEventListener\('dblclick'/);
+});
+
+test('colourways: graphite-amber is the default, all four are defined with a light variant, and the 3D palette follows them', () => {
+  assert.equal(DEFAULT_COLORWAY, 'graphite-amber');
+  assert.deepEqual(COLORWAYS, ['graphite-amber', 'signal', 'mono', 'mint']);
+  const h = renderHtml(hostile());
+  assert.match(h, /<html lang="en" data-colorway="graphite-amber" data-theme="dark">/);
+  const d = JSON.parse(scripts(h).json);
+  assert.equal(d.colorway, 'graphite-amber');
+  assert.deepEqual(d.colorways, COLORWAYS);
+  const css = /<style>([\s\S]*?)<\/style>/.exec(h)[1];
+  const theme = css.slice(css.indexOf('THEME'), css.indexOf('end THEME'));
+  for (const c of COLORWAYS) {
+    assert.ok(theme.includes(`:root[data-colorway=${c}]{`), `${c} dark block`);
+    assert.ok(theme.includes(`:root[data-colorway=${c}][data-theme=light]{`), `${c} light block`);
+  }
+  assert.match(theme, /--fix:#e3b867;--review:#9fb0c2/);
+  assert.match(theme, /--fix:#ff3b30;--review:#ffb020/);
+  assert.match(theme, /--fix:#ffffff[^}]*--fix-w:700/);
+  assert.match(theme, /--fix:#72e0b0;--review:#8fa6b8/);
+  assert.equal(JSON.parse(scripts(renderHtml(hostile(), { colorway: 'signal' })).json).colorway, 'signal');
+  assert.match(renderHtml(hostile(), { colorway: 'mint' }), /data-colorway="mint"/);
+  assert.throws(() => renderHtml(hostile(), { colorway: 'x"><script>' }), /unknown colourway/);
+  // Severity glyphs stay next to the colour.
+  const { code } = scripts(h);
+  assert.match(code, /GLY=\{fix:'\\u25c6',review:'\\u25c7',info:'\\u00b7'\}/);
+  // The 3D view reads the palette from the active colourway and re-applies it when it changes.
+  assert.match(code, /function recolor3d\(\)\{[^]*pal\(\);G3\.backgroundColor\(P3\.bg\)/);
+  assert.match(code, /function applyLook\(\)\{[^]*recolor3d\(\)/);
+});
+
+test('colourways: ?colorway= beats storage beats the baked-in default, and every storage access is wrapped', () => {
+  const { code } = scripts(renderHtml(hostile()));
+  assert.match(code, /new URLSearchParams\(location\.search\)\.get\('colorway'\)/);
+  assert.match(code, /colorway:okCw\(urlColorway\(\)\)\?urlColorway\(\):okCw\(sget\('colorway'\)\)\?sget\('colorway'\):D\.colorway/);
+  assert.match(code, /function sget\(k\)\{try\{return window\.localStorage\.getItem\(LS\+k\)\}catch\(e\)\{return null\}\}/);
+  assert.match(code, /function sset\(k,v\)\{try\{window\.localStorage\.setItem\(LS\+k,v\)\}catch\(e\)\{\}\}/);
+  assert.equal((code.match(/localStorage/g) || []).length, 2, 'only the two wrapped accessors touch storage');
+  assert.doesNotMatch(code, /sessionStorage|indexedDB/);
+  // Run the parsing and storage helpers against a storage that throws and a hostile URL.
+  const start = code.indexOf('var LS=');
+  const end = code.indexOf('var mq=null');
+  const body = code.slice(start, end);
+  const run = (search, store) => new Function('window', 'location', 'D', `${body}; return look;`)(
+    { localStorage: store }, { search }, { colorways: COLORWAYS, colorway: 'graphite-amber' });
+  const boom = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
+  assert.equal(run('', boom).colorway, 'graphite-amber');
+  assert.equal(run('?colorway=signal', boom).colorway, 'signal');
+  assert.equal(run('?colorway=nope', boom).colorway, 'graphite-amber');
+  assert.equal(run('?colorway=<script>', boom).colorway, 'graphite-amber');
+  const mem = { m: { 'tracegrid.colorway': 'mint', 'tracegrid.rotate': '0' }, getItem(k) { return this.m[k] ?? null; }, setItem() {} };
+  const l = run('', mem);
+  assert.equal(l.colorway, 'mint');
+  assert.equal(l.rot, false);
+  assert.equal(run('?colorway=mono', mem).colorway, 'mono', 'the URL beats the stored choice');
+});
+
+test('settings popover: gear next to the theme toggle with colourway, mode and auto-rotate', () => {
+  const h = renderHtml(hostile());
+  assert.match(h, /id="gear"[^>]*>[^<]*<\/button><button id="theme"/);
+  for (const id of ['cw', 'mode', 'rot']) assert.match(h, new RegExp(`id="${id}"`));
+  assert.match(h, /Auto-rotate 3D/);
+  assert.match(h, /<option value="auto">Auto/);
 });
