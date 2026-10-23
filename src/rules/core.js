@@ -1,12 +1,12 @@
 // Core rules, written against the same contract as plugins (see src/engine.js).
 
-const isClientFrom = (graph) => (e) => e.kind === 'from' && (graph.node(e.source) || {}).side === 'client';
+const isClientFrom = (graph) => (e) => e.relation === 'from' && (graph.node(e.source) || {}).side === 'client';
 
 /** Tables the client (code outside edge functions) queries: Map id -> { at, sites }. */
 function clientTables(graph) {
   const m = new Map();
   const f = isClientFrom(graph);
-  for (const e of graph.edges) if (f(e)) { if (!m.has(e.target)) m.set(e.target, { at: [], sites: 0 }); const x = m.get(e.target); x.at.push(...e.at); x.sites += e.count; }
+  for (const e of graph.links) if (f(e)) { if (!m.has(e.target)) m.set(e.target, { at: [], sites: 0 }); const x = m.get(e.target); x.at.push(...e.at); x.sites += e.count; }
   return m;
 }
 
@@ -35,8 +35,8 @@ export const coreRules = [
     run({ graph, config }) {
       return grantedFunctions(graph, config)
         .map((n) => ({ n, inc: callers(graph, n.id) }))
-        .filter(({ inc }) => inc.length && !inc.some((e) => e.kind === 'rpc'))
-        .map(({ n, inc }) => fnFinding(n, { usedBy: [...new Set(inc.map((e) => e.kind))].sort() }));
+        .filter(({ inc }) => inc.length && !inc.some((e) => e.relation === 'rpc'))
+        .map(({ n, inc }) => fnFinding(n, { usedBy: [...new Set(inc.map((e) => e.relation))].sort() }));
     },
   },
   {

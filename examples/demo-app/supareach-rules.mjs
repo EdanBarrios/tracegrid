@@ -10,10 +10,10 @@ export const rules = [
     run({ graph, config }) {
       const protectedTables = new Set(config.protectedTables || []);
       const out = [];
-      for (const e of graph.edges) {
+      for (const e of graph.links) {
         const from = graph.node(e.source);
         const to = graph.node(e.target);
-        if (e.kind !== 'from' || !from || from.side !== 'client' || !to || !protectedTables.has(to.label)) continue;
+        if (e.relation !== 'from' || !from || from.side !== 'client' || !to || !protectedTables.has(to.label)) continue;
         const writes = e.ops.filter((op) => ['insert', 'update', 'upsert', 'delete'].includes(op));
         if (writes.length) out.push({ id: to.label, node: to.id, at: e.at[0], message: `${writes.join('/')} from ${from.label}` });
       }

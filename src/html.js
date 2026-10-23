@@ -1,6 +1,6 @@
 // Single self-contained graph.html: no CDN, canvas force layout, search, click for edges, dark/light.
 export function renderHtml(r) {
-  const data = { root: r.root, generated_at: r.generated_at, nodes: r.nodes, edges: r.edges.map(({ source, target, kind, confidence, ops, at }) => ({ source, target, kind, confidence, ops, at: at.slice(0, 10) })), findings: r.findings, rules: r.rules };
+  const data = { root: r.root, generated_at: r.generated_at, nodes: r.nodes, links: r.links.map(({ source, target, relation, confidence, ops, at }) => ({ source, target, relation, confidence, ops, at: at.slice(0, 10) })), findings: r.findings, rules: r.rules };
   const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16));
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -34,7 +34,7 @@ const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim
 const TYPES=['table','view','function','edge_function','cron','bucket','external','file'];
 const byId=new Map();D.nodes.forEach((n,i)=>{n.i=i;n.deg=0;n.x=Math.cos(i)*300*Math.random();n.y=Math.sin(i)*300*Math.random();n.vx=0;n.vy=0;byId.set(n.id,n)});
 const flagged=new Map();for(const it of D.findings){if(it.node&&byId.has(it.node))flagged.set(it.node,it.rule)}
-const E=D.edges.filter(e=>byId.has(e.source)&&byId.has(e.target)).map(e=>({...e,s:byId.get(e.source),t:byId.get(e.target)}));
+const E=D.links.filter(e=>byId.has(e.source)&&byId.has(e.target)).map(e=>({...e,s:byId.get(e.source),t:byId.get(e.target)}));
 E.forEach(e=>{e.s.deg++;e.t.deg++});
 const adj=new Map();D.nodes.forEach(n=>adj.set(n.id,[]));E.forEach(e=>{adj.get(e.source).push(e);adj.get(e.target).push(e)});
 const shown=new Set(TYPES);let sel=null,match=new Set(),q='';
@@ -62,7 +62,7 @@ ctx.translate(W/2+tx,H/2+ty);ctx.scale(k,k);
 const near=sel?new Set(adj.get(sel.id).flatMap(e=>[e.source,e.target])):null;
 ctx.lineWidth=1/k;
 for(const e of E){if(!vis(e.s)||!vis(e.t))continue;const on=sel&&(e.s===sel||e.t===sel);
-ctx.strokeStyle=on?css('--hi'):css('--edge');if(sel&&!on)ctx.globalAlpha=.25;if(e.confidence==='inferred')ctx.setLineDash([4/k,3/k]);
+ctx.strokeStyle=on?css('--hi'):css('--edge');if(sel&&!on)ctx.globalAlpha=.25;if(e.confidence!=='extracted')ctx.setLineDash(e.confidence==='ambiguous'?[1.5/k,3/k]:[4/k,3/k]);
 ctx.beginPath();ctx.moveTo(e.s.x,e.s.y);ctx.lineTo(e.t.x,e.t.y);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1}
 for(const n of D.nodes){if(!vis(n))continue;const r=rad(n);const dim=(sel&&!near.has(n.id))||(q&&!match.has(n.id));
 ctx.globalAlpha=dim?.2:1;ctx.fillStyle=css('--'+n.type);ctx.beginPath();ctx.arc(n.x,n.y,r,0,7);ctx.fill();
@@ -87,7 +87,7 @@ const link=id=>{const n=byId.get(id);return '<a class=n data-id="'+esc(id)+'">'+
 info.addEventListener('click',ev=>{const a=ev.target.closest('a.n');if(a){const n=byId.get(a.dataset.id);if(n){shown.add(n.type);select(n);focus(n)}}});
 function focus(n){tx=-n.x*k;ty=-n.y*k}
 function select(n){sel=n;render()}
-function render(){if(!sel){let h='<p class=muted>'+D.nodes.length+' nodes, '+E.length+' edges. Click a node to see its edges. Dashed edges are inferred. Red rings are findings or missing objects.</p>';
+function render(){if(!sel){let h='<p class=muted>'+D.nodes.length+' nodes, '+E.length+' edges. Click a node to see its edges. Dashed links are inferred, dotted are ambiguous. Red rings are findings or missing objects.</p>';
 for(const ru of D.rules){const items=D.findings.filter(f=>f.rule===ru.id);if(!items.length)continue;h+='<h2>'+esc(ru.title)+' ('+items.length+')</h2><ul>';
 for(const it of items.slice(0,200)){h+='<li>'+(it.node&&byId.has(it.node)?link(it.node):esc(it.id))+'</li>'}h+='</ul>'}
 info.innerHTML=h;return}
@@ -96,7 +96,7 @@ if(flagged.has(n.id))h+='<p class=bad>Finding: '+esc(flagged.get(n.id))+'</p>';i
 const attrs=['rls','policies','securityDefiner','anon','authenticated','returns','verifyJwt','entryPoint','schedule','securityInvoker','overloads'].filter(a=>n[a]!==undefined&&n[a]!==null);
 if(attrs.length)h+='<ul>'+attrs.map(a=>'<li>'+a+': '+esc(n[a])+'</li>').join('')+'</ul>';
 const out=adj.get(n.id).filter(e=>e.source===n.id),inn=adj.get(n.id).filter(e=>e.target===n.id);
-const row=(e,o)=>'<li>'+link(o)+' <span class=muted>'+esc(e.kind)+(e.ops.length?' '+esc(e.ops.join(',')):'')+(e.confidence==='inferred'?' (inferred)':'')+'</span><br><span class=muted>'+e.at.slice(0,5).map(esc).join('<br>')+'</span></li>';
+const row=(e,o)=>'<li>'+link(o)+' <span class=muted>'+esc(e.relation)+(e.ops.length?' '+esc(e.ops.join(',')):'')+(e.confidence!=='extracted'?' ('+esc(e.confidence)+')':'')+'</span><br><span class=muted>'+e.at.slice(0,5).map(esc).join('<br>')+'</span></li>';
 h+='<h2>Calls / uses ('+out.length+')</h2><ul>'+out.map(e=>row(e,e.target)).join('')+'</ul>';
 h+='<h2>Called / used by ('+inn.length+')</h2><ul>'+inn.map(e=>row(e,e.source)).join('')+'</ul><p><button id=clr>Back to findings</button></p>';
 info.innerHTML=h;document.getElementById('clr').onclick=()=>select(null)}

@@ -55,7 +55,7 @@ test('catalog wins over migrations: dashboard revokes, dashboard functions and c
   assert.match(db.findings.find((f) => f.id === 'next_invoice_number/1').at, /^migrations\/20240201000000_billing\.sql:\d+$/);
   // Helpers referenced from storage.objects policies count as used (platform-schema policies are read).
   assert.deepEqual(ids(db, 'granted-helper-function'), ['can_upload_avatar/1', 'is_project_member/1']);
-  assert.ok(db.edges.some((e) => e.source === 'table:auth.users' && e.target === 'fn:handle_new_user/0' && e.kind === 'trigger'));
+  assert.ok(db.links.some((e) => e.source === 'table:auth.users' && e.target === 'fn:handle_new_user/0' && e.relation === 'trigger'));
   // A cron job added in the dashboard calls export-csv.
   assert.deepEqual(ids(mig, 'uncalled-edge-function'), ['export-csv']);
   assert.deepEqual(ids(db, 'uncalled-edge-function'), []);

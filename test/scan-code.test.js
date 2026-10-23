@@ -21,10 +21,10 @@ test('rpc through casts, parentheses, non-null and multi-line', () => {
   assert.deepEqual(names(r, 'rpc'), ['a', 'b', 'c', 'd']);
 });
 
-test('ternary and || of literals resolve to both names, inferred', () => {
+test('ternary and || of literals resolve to both names, ambiguous', () => {
   const r = scanSource(`supabase.rpc(x ? 'one' : 'two'); supabase.rpc(y || 'three' ? 'four' : 'five');`, 'a.ts');
   assert.deepEqual(names(r, 'rpc'), ['five', 'four', 'one', 'two']);
-  assert.ok(r.calls.every((c) => c.confidence === 'inferred'));
+  assert.ok(r.calls.every((c) => c.confidence === 'ambiguous'));
 });
 
 test('same-file const and literal-union parameter', () => {

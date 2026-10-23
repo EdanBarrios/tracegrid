@@ -23,16 +23,16 @@ test('demo app findings', async () => {
   assert.deepEqual(ids('uncalled-edge-function'), ['export-csv']); // payment-webhook: verify_jwt = false
   assert.deepEqual(ids('unknown-table'), []);
   assert.deepEqual(r.info.external_entry_points.map((e) => [e.id, e.source]), [['payment-webhook', 'supabase/config.toml']]);
-  assert.ok(r.edges.some((x) => x.source === 'external:http' && x.target === 'edge:payment-webhook' && x.kind === 'entry-point'));
+  assert.ok(r.links.some((x) => x.source === 'external:http' && x.target === 'edge:payment-webhook' && x.relation === 'entry-point'));
   assert.ok(r.findings.every((f) => f.fingerprint === `${f.rule}:${f.id}` && f.level));
   assert.deepEqual(r.info.storage_buckets.map((b) => b.id).sort(), ['avatars', 'invoice-pdfs']);
   assert.equal(r.info.unresolved_dynamic_calls.length, 1);
   assert.equal(r.schema_version, 1);
   // graph shape
-  const e = r.edges.find((x) => x.target === 'fn:project_stats_v2/1');
-  assert.equal(e.confidence, 'inferred');
-  assert.ok(r.edges.some((x) => x.source === 'cron:nightly-digest' && x.target === 'edge:nightly-digest'));
-  assert.ok(r.edges.some((x) => x.source === 'table:tasks' && x.target === 'fn:is_project_member/1' && x.kind === 'policy-uses'));
+  const e = r.links.find((x) => x.target === 'fn:project_stats_v2/1');
+  assert.equal(e.confidence, 'ambiguous');
+  assert.ok(r.links.some((x) => x.source === 'cron:nightly-digest' && x.target === 'edge:nightly-digest'));
+  assert.ok(r.links.some((x) => x.source === 'table:tasks' && x.target === 'fn:is_project_member/1' && x.relation === 'policy-uses'));
 });
 
 const run = (...a) => spawnSync(process.execPath, [bin, ...a], { encoding: 'utf8' });
@@ -109,4 +109,22 @@ test('ignores without a reason are a config error (exit 2)', () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /non-empty "reason"/);
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('graph.json is networkx node-link shaped (Graphify-compatible)', async () => {
+  const r = await analyze(demo);
+  assert.equal(r.schema_version, 1);
+  assert.equal(r.directed, true);
+  assert.equal(r.multigraph, false);
+  assert.equal(typeof r.graph, 'object');
+  assert.equal(r.edges, undefined);
+  const ids = new Set(r.nodes.map((n) => n.id));
+  for (const n of r.nodes) assert.ok(n.id && n.label && n.type, JSON.stringify(n));
+  for (const l of r.links) {
+    assert.ok(ids.has(l.source) && ids.has(l.target), `dangling link ${l.source} -> ${l.target}`);
+    assert.ok(typeof l.relation === 'string' && l.relation);
+    assert.ok(['extracted', 'inferred', 'ambiguous'].includes(l.confidence));
+  }
+  const conf = new Set(r.links.map((l) => l.confidence));
+  assert.deepEqual([...conf].sort(), ['ambiguous', 'extracted', 'inferred']);
 });

@@ -67,12 +67,13 @@ export async function analyze(root, opts = {}) {
     else Object.assign(nodes.get(id), extra);
     return nodes.get(id);
   };
-  const edge = (source, target, kind, confidence, at, op) => {
-    const k = `${source}|${target}|${kind}`;
+  const RANK = { ambiguous: 0, inferred: 1, extracted: 2 };
+  const edge = (source, target, relation, confidence, at, op) => {
+    const k = `${source}|${target}|${relation}`;
     let e = edges.get(k);
-    if (!e) { e = { source, target, kind, confidence, ops: [], at: [], count: 0 }; edges.set(k, e); }
+    if (!e) { e = { source, target, relation, confidence, ops: [], at: [], count: 0 }; edges.set(k, e); }
     e.count++;
-    if (confidence === 'extracted') e.confidence = 'extracted';
+    if (RANK[confidence] > RANK[e.confidence]) e.confidence = confidence;
     if (op && !e.ops.includes(op)) e.ops.push(op);
     if (at && e.at.length < 50) e.at.push(at);
   };
@@ -212,7 +213,7 @@ export async function analyze(root, opts = {}) {
     tables: catalog.tables.length, views: catalog.views.length, functions: catalog.functions.length,
     policies: catalog.tables.reduce((a, t) => a + t.policies.length, 0),
     cron_jobs: catalog.cron.length, edge_functions: edgeFns.length,
-    rpcs_called_by_code: graph.nodes.filter((n) => n.type === 'function' && !n.missing && graph.incoming(n.id).some((e) => e.kind === 'rpc')).length,
+    rpcs_called_by_code: graph.nodes.filter((n) => n.type === 'function' && !n.missing && graph.incoming(n.id).some((e) => e.relation === 'rpc')).length,
   };
 
   return {
@@ -228,8 +229,12 @@ export async function analyze(root, opts = {}) {
     findings: ran.findings,
     suppressed: ran.suppressed,
     info,
+    // Graph section: networkx node-link format (Graphify-compatible): nodes, links, relation, confidence.
+    directed: true,
+    multigraph: false,
+    graph: { name: path.basename(root), tool: 'supareach' },
     nodes: [...nodes.values()],
-    edges: [...edges.values()],
+    links: [...edges.values()],
   };
 }
 

@@ -65,15 +65,18 @@ export function runRules(rules, ctx, suppress = () => null) {
   return { findings, suppressed, rules: rules.map(({ id, level, title, why, plugin }) => ({ id, level, title, why, ...(plugin ? { plugin } : {}) })) };
 }
 
-/** Lightweight read-only view over nodes and edges for rules. */
-export function makeGraph(nodes, edges) {
+/**
+ * Read-only view over the graph for rules: `nodes`, `links` (each { source, target, relation,
+ * confidence, ops, at, count }), and `node(id)`, `incoming(id)`, `outgoing(id)`.
+ */
+export function makeGraph(nodes, links) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const inc = new Map();
   const out = new Map();
   const push = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
-  for (const e of edges) { push(inc, e.target, e); push(out, e.source, e); }
+  for (const e of links) { push(inc, e.target, e); push(out, e.source, e); }
   return {
-    nodes, edges,
+    nodes, links,
     node: (id) => byId.get(id),
     incoming: (id) => inc.get(id) || [],
     outgoing: (id) => out.get(id) || [],

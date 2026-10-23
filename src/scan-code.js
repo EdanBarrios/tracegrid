@@ -11,7 +11,7 @@ const SUPABASE_RECEIVER = /supabase|client|\bdb\b|admin|\bsb\b|service/i;
 
 /**
  * @typedef {{ kind: 'table'|'rpc'|'invoke'|'bucket', name: string, file: string, line: number,
- *   op?: string, confidence: 'extracted'|'inferred', via?: string }} CallSite
+ *   op?: string, confidence: 'extracted'|'inferred'|'ambiguous', via?: string }} CallSite
  * @typedef {{ kind: string, file: string, line: number, expr: string }} Unresolved
  */
 
@@ -51,13 +51,13 @@ function resolveName(arg, consts) {
   if (ts.isConditionalExpression(a)) {
     const t = resolveName(a.whenTrue, consts);
     const f = resolveName(a.whenFalse, consts);
-    if (t && f) return { names: [...new Set([...t.names, ...f.names])], confidence: 'inferred' };
+    if (t && f) return { names: [...new Set([...t.names, ...f.names])], confidence: 'ambiguous' };
     return null;
   }
   if (ts.isBinaryExpression(a) && (a.operatorToken.kind === ts.SyntaxKind.BarBarToken || a.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)) {
     const l = resolveName(a.left, consts);
     const r = resolveName(a.right, consts);
-    if (l && r) return { names: [...new Set([...l.names, ...r.names])], confidence: 'inferred' };
+    if (l && r) return { names: [...new Set([...l.names, ...r.names])], confidence: 'ambiguous' };
     return null;
   }
   if (ts.isIdentifier(a) && consts.has(a.text)) return { names: [consts.get(a.text)], confidence: 'inferred' };
@@ -68,7 +68,7 @@ function resolveName(arg, consts) {
         const q = p.parameters.find((x) => ts.isIdentifier(x.name) && x.name.text === a.text);
         if (!q) continue;
         const lits = literalUnion(q.type);
-        return lits ? { names: lits, confidence: 'inferred' } : null;
+        return lits ? { names: lits, confidence: lits.length > 1 ? 'ambiguous' : 'inferred' } : null;
       }
     }
   }
