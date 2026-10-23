@@ -156,15 +156,17 @@ Deno.serve(async () => new Response(JSON.stringify((await admin.from('items').se
   assert.equal(f[0].confidence, 'low');
 });
 
-test('G4c a secret-looking URL key passed as the only argument of an RPC is a capability', async () => {
-  const f = await scan(HEAD + `const admin = createClient(url, serviceKey);
+test('G4c a secret-looking URL value passed as the only RPC argument is info at low confidence, not silent', async () => {
+  const f = await scan(HEAD + `const svc = createClient(url, serviceKey);
 Deno.serve(async (req) => {
-  const accessKey = new URL(req.url).searchParams.get('k');
-  if (!accessKey) return new Response('no', { status: 400 });
-  const { data } = await admin.rpc('redeem', { t: accessKey });
+  const orgKey = new URL(req.url).searchParams.get('org');
+  const { data } = await svc.rpc('delete_org', orgKey);
   return new Response(JSON.stringify(data));
 });`, { verifyJwt: false });
-  assert.deepEqual(f.map((x) => x.fingerprint), []);
+  assert.equal(f.length, 1);
+  assert.equal(f[0].tier, 'info');
+  assert.equal(f[0].confidence, 'low');
+  assert.match(f[0].message, /request value orgKey is passed to delete_org as the only credential; confirm the RPC treats it as a secret \(hash and compare\)/);
 });
 
 test('G10 service-role use inside a helper defined above the handler counts where the handler calls it', async () => {

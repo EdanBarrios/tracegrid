@@ -109,13 +109,14 @@ function tokenGate(text) {
   return null;
 }
 
-/** A secret-looking value read from the URL or a header and passed as the only argument of an RPC. */
-function keyRpcGate(text) {
+/** A secret-looking value read from the URL or a header and passed as the only argument of an RPC. Weak: never a full gate. */
+function keyRpcUse(text) {
   const names = [...text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*[^;\n]*?(?:searchParams\s*\.\s*get|headers\s*\.\s*get)\s*\(/g)].map((m) => m[1]).filter((n) => /token|key|secret|code|hash|sig|nonce|link/i.test(n));
   if (!names.length) return null;
-  const re = new RegExp(String.raw`\.rpc\s*\(\s*['"\x60][\w.]+['"\x60]\s*,\s*\{\s*[\w$]+\s*:\s*(?:${names.map(esc).join('|')})\s*,?\s*\}`, 'g');
+  const alt = names.map(esc).join('|');
+  const re = new RegExp(String.raw`\.rpc\s*\(\s*['"\x60]([\w.]+)['"\x60]\s*,\s*(?:\{\s*[\w$]+\s*:\s*(${alt})\s*,?\s*\}|(${alt})\s*\))`, 'g');
   const m = re.exec(text);
-  return m ? stmtLine(text, m.index) : null;
+  return m ? { line: stmtLine(text, m.index), rpc: m[1], name: m[2] || m[3] } : null;
 }
 
 /** First rate-limit / attempt-claim RPC whose failure returns early. */
@@ -132,7 +133,6 @@ function gatesOf(text, sharedHelpers) {
   add(firstUse(text, VERIFIER), 'signature / token verifier');
   add(callerScopedGate(text, sharedHelpers), 'caller-scoped RLS read');
   add(tokenGate(text), 'hashed token capability');
-  add(keyRpcGate(text), 'key passed as the only RPC credential');
   add(rateLimitGate(text), 'rate-limit gate');
   return out.sort((a, b) => a.line - b.line);
 }
@@ -173,7 +173,7 @@ function sharedScopedHelpers(root, files) {
  * @param {{ name: string, dir: string, entry?: string }[]} edgeFns
  * @param {string[]} files scanned files (relative)
  * @param {{ file: string, line: number, kind?: string, privileged?: boolean }[]} calls
- * @returns {Map<string, { serviceBeforeAuth?: { at: string, gate: string|null, kind: 'no-gate'|'before-gate'|'inert' }, requestFetch?: { at: string, expr: string } }>}
+ * @returns {Map<string, { serviceBeforeAuth?: { at: string, gate: string|null, kind: 'no-gate'|'before-gate'|'inert'|'key-rpc', key?: { name: string, rpc: string } }, requestFetch?: { at: string, expr: string } }>}
  */
 export function edgeHints(root, edgeFns, files, calls) {
   const out = new Map();
@@ -204,7 +204,7 @@ export function edgeHints(root, edgeFns, files, calls) {
       uses.length = 0; uses.push(...adj);
       uses.sort((a, b) => a - b);
       const gates = gatesOf(text, shared);
-      per.push({ f, text, uses, gate: gates[0] || null });
+      per.push({ f, text, uses, gate: gates[0] || null, keyRpc: keyRpcUse(text) });
       if (!h.requestFetch) {
         const fetchHit = requestFetch(text);
         if (fetchHit) h.requestFetch = { at: `${f}:${lineAt(text, fetchHit.index)}`, expr: fetchHit.expr };
@@ -220,6 +220,10 @@ export function edgeHints(root, edgeFns, files, calls) {
       let kind;
       if (p.gate && first >= p.gate.line) continue;
       if (!p.gate && gatedElsewhere && e.entry && p.f !== e.entry) continue;
+      if (p.keyRpc && !inert && first >= p.keyRpc.line && (!p.gate || first < p.gate.line)) {
+        h.serviceBeforeAuth = { at: `${p.f}:${first}`, gate: null, kind: 'key-rpc', key: p.keyRpc };
+        continue;
+      }
       kind = inert ? 'inert' : p.gate ? 'before-gate' : 'no-gate';
       h.serviceBeforeAuth = { at: `${p.f}:${first}`, gate: p.gate ? `${p.f}:${p.gate.line} (${p.gate.what})` : null, kind };
     }

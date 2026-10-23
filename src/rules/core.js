@@ -212,6 +212,7 @@ export const coreRules = [
       return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && n.serviceBeforeAuth).map((n) => {
         const s = n.serviceBeforeAuth;
         if (s.kind === 'inert') return { id: n.label, node: n.id, at: s.at, level: 'note', tier: 'info', message: 'only head or count requests through the service-role client; no row data returned' };
+        if (s.kind === 'key-rpc') return { id: n.label, node: n.id, at: s.at, level: 'note', tier: 'info', confidence: 'low', message: `the request value ${s.key.name} is passed to ${s.key.rpc} as the only credential; confirm the RPC treats it as a secret (hash and compare)` };
         if (s.kind === 'before-gate') return { id: n.label, node: n.id, at: s.at, message: `service-role data use comes before the first recognised gate (${s.gate})` };
         if (n.verifyJwt === false) return { id: n.label, node: n.id, at: s.at, message: 'no recognised gate and verify_jwt = false: verify this function authorizes callers' };
         return { id: n.label, node: n.id, at: s.at, confidence: 'low', message: 'no recognised gate; verify_jwt = true is the only check found (any signed-in caller, or anyone holding the anon key, passes it)' };
