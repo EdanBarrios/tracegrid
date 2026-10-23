@@ -42,7 +42,7 @@ export async function analyze(root, opts = {}) {
   const plugins = opts.rules || await loadPlugins(cfg._dir || root, cfg.plugins || []);
   const files = findFiles(root, cfg.include, cfg.exclude);
   const code = scanFiles(root, files, cfg.wrappers);
-  const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants });
+  const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants, relDir: cfg.migrations });
   const replayed = fromMigrations(sql);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
   const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec } : {}), replayed) : replayed;
@@ -93,7 +93,7 @@ export async function analyze(root, opts = {}) {
   }
   /** Node ids for a function name: every arity, or one `missing` node. */
   const fnTargets = (name) => fnIdsByName.get(name) || [node(`fn:${name}`, 'function', name, { schema: schemaOf(name), missing: true }).id];
-  for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.dir });
+  for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.entry });
   // External entry points: config, `// supareach: entry-point <reason>` hatches, verify_jwt = false.
   const entries = [];
   const entryInvalid = [];

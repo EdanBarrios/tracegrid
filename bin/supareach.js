@@ -8,6 +8,7 @@ import { ConfigError } from '../src/config.js';
 import { RuleError } from '../src/engine.js';
 import { DbError } from '../src/db.js';
 import { readBaseline, writeBaseline, compareBaseline, BaselineError } from '../src/baseline.js';
+import { toSarif, githubAnnotations, stepSummary } from '../src/ci.js';
 
 const HELP = `supareach [dir] [options]
 
@@ -25,6 +26,9 @@ Options:
   --update-baseline    Write current findings to the baseline (only removes entries
                        from an existing baseline unless --force)
   --force              Let --update-baseline add new entries
+  --sarif <file>       Also write SARIF 2.1.0 (for github/codeql-action/upload-sarif)
+  --github             Print GitHub annotations (new findings only with --check) and
+                       append a table to $GITHUB_STEP_SUMMARY
   --no-output          Do not write graph.json / report.md / graph.html
   -h, --help           Show this help
   -v, --version        Show version
@@ -42,6 +46,8 @@ function parseArgs(argv) {
     else if (x === '--baseline') a.baseline = need(++i, x);
     else if (x === '--db-url') a.dbUrl = need(++i, x);
     else if (x === '--check') a.check = true;
+    else if (x === '--sarif') a.sarif = need(++i, x);
+    else if (x === '--github') a.github = true;
     else if (x === '--update-baseline') a.update = true;
     else if (x === '--force') a.force = true;
     else if (x === '--no-output') a.output = false;
@@ -90,6 +96,16 @@ async function main() {
   for (const w of r.warnings) console.error(`warning: ${w}`);
   for (const h of r.info.invalid_hatches) console.error(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
 
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const prefixFrom = (base) => { const p = path.relative(base, root).split(path.sep).join('/'); return p.startsWith('..') ? '' : p; };
+  if (args.sarif) {
+    const fallbackUri = [args.config ? path.relative(root, path.resolve(args.config)) : 'supareach.config.json', 'supabase/config.toml', 'package.json']
+      .find((f) => fs.existsSync(path.join(root, f))) || 'supabase/config.toml';
+    fs.writeFileSync(path.resolve(args.sarif), JSON.stringify(toSarif(r, { version: pkg.version, prefix: prefixFrom(process.cwd()), fallbackUri }), null, 1));
+    console.log(`SARIF written to ${args.sarif}`);
+  }
+  let fresh = null;
+
   const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
   let code = 0;
   if (args.update) {
@@ -106,10 +122,16 @@ async function main() {
   if (args.check) {
     if (!fs.existsSync(baselinePath)) fail(`--check: no baseline at ${baselinePath}. Run with --update-baseline first.`);
     const c = compareBaseline(readBaseline(baselinePath), r);
+    fresh = c.fresh;
     for (const f of c.fresh) console.error(`NEW ${f.level} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
     if (c.fixed.length) console.log(`${c.fixed.length} baselined finding(s) no longer present (run --update-baseline to lock that in):\n  ${c.fixed.join('\n  ')}`);
     if (c.fresh.length) { console.error(`check: ${c.fresh.length} new finding(s) not in the baseline`); code = 1; }
     else console.log('check: no new findings');
+  }
+  if (args.github) {
+    const prefix = prefixFrom(process.env.GITHUB_WORKSPACE || process.cwd());
+    for (const line of githubAnnotations(fresh || r.findings, r.rules, prefix)) console.log(line);
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, stepSummary(r, fresh));
   }
   return code;
 }

@@ -526,7 +526,7 @@ export function scanMigrations(dir, opts = {}) {
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
   for (const f of files) {
     st.stats.files++;
-    const rel = path.join(path.basename(dir), f);
+    const rel = (opts.relDir || path.basename(dir)).replace(/\/+$/, '') + '/' + f;
     const sql = fs.readFileSync(path.join(dir, f), 'utf8');
     const stmts = splitStatements(sql);
     for (const s of stmts) {

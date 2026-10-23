@@ -97,14 +97,16 @@ Webhooks, auth hooks and health checks have no caller by design: put them in
 
 ```sh
 npx supareach --update-baseline      # writes supareach.baseline.json; commit it
-npx supareach --check --no-output    # exit 1 if any finding count rose
+npx supareach --check --no-output    # exit 1 if any finding is not in the baseline
 ```
 
-`--check` compares counts per finding type and prints the new items. Lowering a count
-passes; run `--update-baseline` to lock in the improvement. Informational lists (buckets,
-unresolved names, unparsed SQL) are not gated.
+The baseline is a list of finding fingerprints (`<rule>:<subject>`, e.g.
+`exposed-uncalled-function:next_invoice_number/1`). `--check` fails on any error or
+warning whose fingerprint is not in it, so fixing one finding and adding another still
+fails. `--update-baseline` only removes entries from an existing baseline; adding needs
+`--force`. Exit codes: 0 clean, 1 new findings, 2 usage or tool error.
 
-GitHub Action:
+GitHub Actions (annotations on the PR diff and a job summary, no permissions needed):
 
 ```yaml
 name: supareach
@@ -116,10 +118,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: npx --yes supareach@0 --check
+      - run: npx --yes supareach@0 --check --github --sarif supareach.sarif
+      # Optional: code scanning alerts. Needs `permissions: security-events: write`, and a
+      # GitHub Code Security license on private repositories.
       - if: always()
-        uses: actions/upload-artifact@v4
-        with: { name: supareach, path: supareach-out }
+        uses: github/codeql-action/upload-sarif@v3
+        with: { sarif_file: supareach.sarif }
 ```
 
 ## Options

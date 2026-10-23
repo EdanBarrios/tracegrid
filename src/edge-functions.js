@@ -9,8 +9,9 @@ export function listEdgeFunctions(root, functionsDir) {
   const jwt = readVerifyJwt(root);
   return fs.readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith('_') && !e.name.startsWith('.') && e.name !== 'node_modules')
-    .filter((e) => fs.readdirSync(path.join(dir, e.name)).some((f) => /^index\.(ts|js|tsx|mjs)$/.test(f)))
-    .map((e) => ({ name: e.name, dir: `${functionsDir}/${e.name}`, verifyJwt: jwt.has(e.name) ? jwt.get(e.name) : null }))
+    .map((e) => ({ e, index: fs.readdirSync(path.join(dir, e.name)).find((f) => /^index\.(ts|js|tsx|mjs)$/.test(f)) }))
+    .filter((x) => x.index)
+    .map(({ e, index }) => ({ name: e.name, dir: `${functionsDir}/${e.name}`, entry: `${functionsDir}/${e.name}/${index}`, verifyJwt: jwt.has(e.name) ? jwt.get(e.name) : null }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

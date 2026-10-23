@@ -52,7 +52,7 @@ test('catalog wins over migrations: dashboard revokes, dashboard functions and c
   assert.deepEqual(ids(mig, 'exposed-uncalled-function'), ['internal_cleanup/0', 'next_invoice_number/1']);
   assert.deepEqual(ids(db, 'exposed-uncalled-function'), ['dashboard_fn/0', 'next_invoice_number/1']);
   assert.equal(db.findings.find((f) => f.id === 'dashboard_fn/0').at, 'db:dashboard_fn()');
-  assert.match(db.findings.find((f) => f.id === 'next_invoice_number/1').at, /^migrations\/20240201000000_billing\.sql:\d+$/);
+  assert.match(db.findings.find((f) => f.id === 'next_invoice_number/1').at, /^supabase\/migrations\/20240201000000_billing\.sql:\d+$/);
   // Helpers referenced from storage.objects policies count as used (platform-schema policies are read).
   assert.deepEqual(ids(db, 'granted-helper-function'), ['can_upload_avatar/1', 'is_project_member/1']);
   assert.ok(db.links.some((e) => e.source === 'table:auth.users' && e.target === 'fn:handle_new_user/0' && e.relation === 'trigger'));
