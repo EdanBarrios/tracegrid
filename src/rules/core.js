@@ -58,7 +58,8 @@ export const coreRules = [
           // A service-role caller is recognised from names and key text (heuristic): review, not fix.
           if (svc.length) Object.assign(f, { tier: 'review', note: [f.note, `called only through a service_role/secret-key client (${svc[0].at[0]}), which does not need the anon/authenticated grant`].filter(Boolean).join('; ') });
           if (n.grantsUncertain) Object.assign(f, { tier: 'review', confidence: 'low', level: f.level === 'error' ? 'warning' : f.level, note: [f.note, `low confidence: dynamic SQL at ${n.grantsUncertain} may revoke or grant it`].join('; ').replace(/^; /, '') });
-          return caveat(f, couldReach(unresolved, 'rpc', n.label.split('.').pop()), '.rpc()');
+          // Dynamic calls through a service_role client cannot need the anon/authenticated grant.
+          return caveat(f, couldReach((unresolved || []).filter((u) => !u.privileged), 'rpc', n.label.split('.').pop()), '.rpc()');
         });
     },
   },

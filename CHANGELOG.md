@@ -31,6 +31,13 @@ projects: re-run `--update-baseline` after reviewing them.
 - `FOR r IN SELECT ... FROM pg_proc WHERE proname IN ('a', 'b') LOOP EXECUTE format('revoke
   ...', r.oid::regprocedure)` is applied per name; with a `LIKE` pattern or an unknown list the
   functions it could touch are low confidence (Review).
+- `DO` blocks: loops are expanded with nesting (FOREACH over a declared array variable, then
+  pg_proc rows by that name, definer overloads only when the query filters on `prosecdef`);
+  `grant/revoke execute` and `alter default privileges` inside a `DO` block are no longer
+  mistaken for dynamic `EXECUTE`.
+- Unresolved `.rpc()` sites through a service-role client no longer downgrade
+  `exposed-uncalled-function` (they cannot need the anon/authenticated grant);
+  `serviceRoleClient()`-style factories are recognised.
 - Column-level grants (`grant select (a, b) on t`) count as table privileges; a column list
   built in a `DO` block makes `client-table-not-granted` low confidence; a column-level revoke
   no longer removes table-level privileges.

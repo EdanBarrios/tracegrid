@@ -392,3 +392,12 @@ test('R5 edge hints: service_role used before any auth check, and fetch of a req
   assert.ok(!f.has('edge-request-controlled-fetch:ef-fixed'));
   assert.ok(r.findings.filter((x) => x.rule.startsWith('edge-')).every((x) => x.tier === 'review'));
 });
+
+test('R6 a dynamic .rpc() through a service-role client does not caveat exposed-uncalled-function', async () => {
+  const r = await run({
+    'supabase/functions/ef-one/index.ts': `declare function serviceRoleClient(): any; declare function after(x: any): void;\nDeno.serve(async () => { const db = serviceRoleClient(); after({ rpc: async (fn: string, args: object) => db.rpc(fn, args) }); return new Response('ok'); });`,
+  });
+  const f = r.findings.find((x) => x.fingerprint === 'exposed-uncalled-function:target_fn/0');
+  assert.ok(f && f.tier === 'fix', JSON.stringify(f));
+  assert.ok(r.info.unresolved_dynamic_calls.some((u) => u.privileged));
+});

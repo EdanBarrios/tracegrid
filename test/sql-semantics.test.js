@@ -488,3 +488,15 @@ test('R2b nested loops: FOREACH over a declared array, then pg_proc rows by that
   assert.equal(r.findings.find((f) => f.id === 'gamma/0').tier, 'fix');
   assert.ok(!r.info.unparsed_sql.length, JSON.stringify(r.info.unparsed_sql));
 });
+
+test('R2c default privileges inside a DO block (with an exception handler) do not make existing functions uncertain', async () => {
+  const r = await run(`
+    create function public.f() returns void language sql as $$ select 1 $$;
+    do $$ begin
+      alter default privileges for role supabase_admin in schema public revoke execute on functions from public, anon, authenticated;
+    exception when insufficient_privilege then raise notice 'not permitted';
+    end $$;`);
+  const f = r.findings.find((x) => x.id === 'f/0');
+  assert.ok(f && f.tier === 'fix' && !f.confidence, JSON.stringify(f));
+  assert.ok(!r.info.unparsed_sql.some((u) => u.risky), JSON.stringify(r.info.unparsed_sql));
+});

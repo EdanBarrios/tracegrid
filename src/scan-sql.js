@@ -653,8 +653,11 @@ const DDL_RE = /\b(create\s+(or\s+replace\s+)?(policy|function|procedure|table|v
  * FOREACH/FOR loop over an array literal are expanded and applied. Anything else that builds DDL
  * dynamically is reported (risky when it touches grants, policies or RLS).
  */
+/** EXECUTE as a PL/pgSQL statement, not the privilege (`grant execute on`) or `execute function`. */
+const EXEC_STMT = /(?<!\b(?:grant|revoke|,)\s*)\bexecute\b(?!\s+(?:on|function|procedure)\b)/i;
+
 function doBlock(st, body, loc, file) {
-  const dynamic = /\bexecute\b/i.test(body);
+  const dynamic = EXEC_STMT.test(maskStrings(body));
   if (dynamic) st.dynamic.push({ text: body, ...loc });
   // Array variables declared with a literal value: `revoked text[] := array['a', 'b'];`
   const declared = new Map();
@@ -788,7 +791,7 @@ function doBlock(st, body, loc, file) {
   }
   for (const inner of splitStatements(rest)) {
     const t = inner.outer.replace(/\s+/g, ' ');
-    const ex = /\bexecute\b/i.exec(maskStrings(inner.text));
+    const ex = EXEC_STMT.exec(maskStrings(inner.text));
     if (ex && !/^\s*(create|alter)\s/i.test(t)) {
       const sql = expand(inner.text, ex.index, null);
       if (sql != null) { apply(sql, 'EXECUTE with literal arguments'); continue; }
@@ -840,6 +843,8 @@ function procNames(query, bind = new Map(), declared = new Map()) {
  */
 function markUncertain(st, text, at) {
   if (!/\b(grant|revoke)\b/i.test(text)) return;
+  // Default privileges only affect objects created later, which replay handles in order.
+  if (/\balter\s+default\s+privileges\b/i.test(text) && !/\b(grant|revoke)\b[\s\S]*\bon\s+(?!functions\b|tables\b|routines\b|sequences\b|types\b|schemas\b)/i.test(text.replace(/\balter\s+default\s+privileges\b[^;]*/gi, ''))) return;
   const t = text.replace(/\s+/g, ' ');
   if (/\bon\s+(schema|sequence|sequences|all\s+sequences|database|type|domain|language|large\s+object|foreign|tablespace)\b/i.test(t)) return;
   const onFn = /\bon\s+(?:all\s+)?(?:function|functions|procedure|procedures|routine|routines)\b/i.test(t);

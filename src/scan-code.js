@@ -12,7 +12,7 @@ import { parseHatches } from './hatches.js';
 const TABLE_OPS = new Set(['select', 'insert', 'update', 'delete', 'upsert']);
 const STORAGE_OPS = new Set(['upload', 'download', 'remove', 'list', 'move', 'copy', 'createSignedUrl', 'createSignedUrls', 'createSignedUploadUrl', 'uploadToSignedUrl', 'getPublicUrl', 'update', 'exists', 'info']);
 /** Functions that return a supabase-js client. */
-const CLIENT_FACTORY = /^(createClient|createBrowserClient|createServerClient|createRouteHandlerClient|createServerComponentClient|createClientComponentClient|createPagesBrowserClient|createPagesServerClient|createMiddlewareClient|createServerActionClient|useSupabaseClient|useSupabase|getSupabase\w*|supabaseClient|createSupabase\w*|create\w*SupabaseClient|createAdminClient|createServiceClient|createServiceRoleClient|useClient|serverSupabaseClient|serverSupabaseServiceRole)$/;
+const CLIENT_FACTORY = /^(createClient|createBrowserClient|createServerClient|createRouteHandlerClient|createServerComponentClient|createClientComponentClient|createPagesBrowserClient|createPagesServerClient|createMiddlewareClient|createServerActionClient|useSupabaseClient|useSupabase|getSupabase\w*|supabaseClient|createSupabase\w*|create\w*SupabaseClient|createAdminClient|createServiceClient|createServiceRoleClient|useClient|serverSupabaseClient|serverSupabaseServiceRole|(?:get|create|make)?(?:[Ss]ervice[Rr]ole|[Ss]ervice|[Aa]dmin)\w*Client)$/;
 /** Receiver names that are (almost certainly) a Supabase client. */
 const SUPABASE_NAME = /supabase|client|^sb$|^db$|admin|service/i;
 /** Receiver names and modules that are something else (query builders, RPC providers, observables). */
@@ -799,6 +799,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       if (w && az.wrappers.has(w.fn)) u.wrapper = az.fnName(w.fn) || '(anonymous)';
       if (r && r.pattern && /[A-Za-z0-9_-]{3}/.test((r.texts || []).join('').replace(new RegExp(UNKNOWN, 'g'), ''))) u.pattern = r.pattern;
       if (extra.schema) u.schema = extra.schema;
+      if (k.privileged) u.privileged = true;
       const inside = w && az.wrappers.has(w.fn) ? w.fn : null;
       if (k.wrapperFn) { bump(k.wrapperFn, 'open'); openSites.push({ target: k.wrapperFn, inside }); }
       if (inside) wrapperBodies.push({ u, fn: inside });
