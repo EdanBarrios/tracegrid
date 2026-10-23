@@ -26,6 +26,22 @@ export const embedJson = (v) => JSON.stringify(v).replace(/</g, '\\u003c').repla
  * @param {object} r the analysis result
  * @param {{ baseline?: { file: string, fresh: string[], fixed: string[] } | null, colorway?: string }} [opts]
  */
+/**
+ * Shorten a path-like string to at most `max` characters by cutting from the left, keeping the end
+ * (file name and :line) and marking the cut with an ellipsis. Prefers to cut at a "/" so the result
+ * reads as "…/20240201000000_billing.sql:29". Pure ES5 so the page embeds it via toString().
+ */
+export function truncLeft(str, max) {
+  var s = String(str == null ? '' : str);
+  max = Math.floor(max);
+  if (!(max >= 2) || s.length <= max) return s;
+  var tail = s.slice(s.length - (max - 1));
+  var slash = tail.indexOf('/');
+  if (slash > 0 && tail.slice(slash).length >= 12) tail = tail.slice(slash);
+  else if (slash === 0) tail = tail;
+  return '…' + tail;
+}
+
 export function renderHtml(r, opts = {}) {
   const colorway = opts.colorway == null ? DEFAULT_COLORWAY : checkColorway(opts.colorway, 'renderHtml');
   const info = r.info || {};
@@ -166,6 +182,7 @@ button:focus-visible,input:focus-visible{outline:var(--hair) solid var(--sel);ou
 .lbl{font-size:var(--fs-label);letter-spacing:var(--track);text-transform:uppercase;color:var(--muted)}
 #app{display:flex;height:100%}
 #side{width:340px;min-width:280px;max-width:42vw;display:flex;flex-direction:column;background:var(--panel);border-right:var(--hair) solid var(--line)}
+#side.compact #chips{display:none}.sum{display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;border:0;border-left:3px solid var(--line2);border-bottom:var(--hair) solid var(--line);padding:9px 12px;font-weight:700}.sum:hover{background:var(--panel2)}.sum.t-fix{border-left-color:var(--fix)}.sum.t-review{border-left-color:var(--review)}
 #side header{padding:10px 10px 8px;border-bottom:var(--hair) solid var(--line);display:flex;flex-direction:column;gap:7px}
 .brand{display:flex;align-items:center;gap:8px}.brand h1{font-size:var(--fs);letter-spacing:var(--track);font-weight:700;margin:0;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .brand h1 .muted{font-weight:400;letter-spacing:0}
@@ -235,7 +252,7 @@ svg .mlabel{font-size:var(--fs-label);paint-order:stroke;stroke:var(--bg);stroke
 .cols{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:14px;padding:14px 18px;align-items:start}
 .col{display:flex;flex-direction:column;gap:12px;min-width:0}
 .todo{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center;padding:14px 16px;border-top:var(--hair) solid var(--line);border-left:3px solid var(--fix)}
-.todo .g{color:var(--fix);font-size:22px}.todo .tt{font-size:15px;font-weight:var(--fix-w)}.todo .mut{color:var(--muted);word-break:break-all}.todo .ob{color:var(--fg);font-weight:700}
+.todo .g{color:var(--fix);font-size:22px}.todo .tt{font-size:15px;font-weight:var(--fix-w)}.todo .mut{color:var(--muted);word-break:break-all}.pth{display:block;white-space:nowrap;overflow:hidden;text-overflow:clip;word-break:normal}table.t td:last-child .pth{max-width:38ch;margin-left:auto}.todo .mut .pth{margin-top:1px}.todo .ob{color:var(--fg);font-weight:700}
 .todo button{border-color:var(--fix);color:var(--fix)}.todo button:hover{background:var(--fix);color:var(--bg)}
 .none{padding:14px 16px;color:var(--muted);border-top:var(--hair) solid var(--line)}
 details{border:var(--hair) solid var(--line);background:var(--panel)}
@@ -286,6 +303,7 @@ const CLIENT = String.raw`
 "use strict";
 var D=JSON.parse(document.getElementById('data').textContent);
 var SVGNS='http://www.w3.org/2000/svg';
+${truncLeft.toString()}
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
 function h(tag,attrs){var el=document.createElement(tag);if(attrs)for(var k in attrs){if(k==='text')el.textContent=attrs[k];else if(k==='cls')el.className=attrs[k];else el.setAttribute(k,attrs[k])}for(var i=2;i<arguments.length;i++){var c=arguments[i];if(c==null)continue;el.appendChild(typeof c==='string'?document.createTextNode(c):c)}return el}
 function s(tag,attrs){var el=document.createElementNS(SVGNS,tag);if(attrs)for(var k in attrs){if(k==='text')el.textContent=attrs[k];else el.setAttribute(k,attrs[k])}return el}
@@ -358,11 +376,20 @@ function renderChips(){chips.textContent='';
   [['functions','Functions'],['tables','Tables'],['edge','Edge'],['other','Other']].forEach(function(k){chips.appendChild(chip(k[1],state.kinds[k[0]],null,function(){state.kinds[k[0]]=!state.kinds[k[0]];renderChips();renderList()}))})}
 function renderFilter(){var el=$('filter');el.textContent='';if(!state.filter){el.hidden=true;return}el.hidden=false;
   el.appendChild(h('span',{text:'FILTER \u00b7 '+state.filter.label}));var x=h('button',{type:'button',title:'Clear filter'},'\u00d7');x.addEventListener('click',function(){setFilter(null)});el.appendChild(x)}
-function setFilter(f){state.filter=f;renderFilter();renderList();if(state.view==='dash')drawDash()}
+function setFilter(f){state.filter=f;renderFilter();renderList();if(state.view==='dash'){drawDash();fitAll()}}
 var list=$('list');
 var matchQ=function(f,q){if(!q)return true;return [f.rule,f.id,f.at,f.note,f.message].some(function(x){return x&&String(x).toLowerCase().indexOf(q)>=0})};
 var whyOf=function(f){var r=rules.get(f.rule);return f.note||f.message||(r?r.title:'')};
 function renderList(){list.textContent='';var q=state.q;var flt=state.filter;
+  $('side').classList.toggle('compact',state.view==='dash');
+  if(state.view==='dash'&&D.nodes.length){
+    /* Dashboard tab: three summary rows; the to-do column already lists the findings. */
+    [['fix','Fix'],['review','Review'],['info','Info']].forEach(function(x){
+      var n=D.findings.filter(function(f){return f.tier===x[0]&&matchQ(f,q)&&(!flt||(f.node&&flt.ids.has(f.node)))}).length;
+      var b=h('button',{type:'button',cls:'sum t-'+x[0],title:'Show '+x[1]+' findings on the Path tab'},h('span',{text:GLY[x[0]]+' '+x[1]}),h('span',{text:String(n)}));
+      b.addEventListener('click',function(){state.tiers={fix:false,review:false,info:false};state.tiers[x[0]]=true;renderChips();setView('path')});
+      list.appendChild(b)});
+    return}
   ['fix','review','info'].forEach(function(t){
     var all=D.findings.filter(function(f){return f.tier===t});
     var items=all.filter(function(f){return state.tiers[t]&&state.kinds[kindOfFinding(f)]&&matchQ(f,q)&&(!flt||(f.node&&flt.ids.has(f.node)))});
@@ -611,9 +638,16 @@ function det(title,count,tipText,body){var d=h('details');var sm=h('summary',nul
   if(tipText){var q=tip(tipText,true);q.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation()});sm.appendChild(q)}
   d.appendChild(sm);d.appendChild(h('div',{cls:'body'},body));return d}
 function objBtn(f){var b=h('button',{type:'button',cls:'ghost',text:f.id,title:'Show path'});b.addEventListener('click',function(){selectFinding(f)});return b}
-function findingTable(list){var t=h('table',{cls:'t'});list.forEach(function(f){t.appendChild(h('tr',null,h('td',{cls:'gl '+f.tier,text:GLY[f.tier]}),h('td',{text:plainTitle(f)}),h('td',{cls:'mono-s'},objBtn(f)),h('td',{text:f.at||''})))});return t}
+function findingTable(list){var t=h('table',{cls:'t'});list.forEach(function(f){t.appendChild(h('tr',null,h('td',{cls:'gl '+f.tier,text:GLY[f.tier]}),h('td',{text:plainTitle(f)}),h('td',{cls:'mono-s'},objBtn(f)),h('td',null,f.at?pth(f.at):null)))});return t}
+/* Path text on one line, cut from the left to fit; the full text lives in title (set via setAttribute, so escaped). */
+var CHARW=0;
+function charW(el){if(CHARW)return CHARW;var p=h('span',{text:'abcdefgh/_.0123456789'});p.style.cssText='position:absolute;visibility:hidden;white-space:nowrap';el.appendChild(p);CHARW=(p.getBoundingClientRect().width/20)||7;el.removeChild(p);return CHARW}
+function fitPth(el){var full=el.getAttribute('data-full')||'';var w=el.clientWidth;if(!w){el.textContent=full;return}el.textContent=truncLeft(full,Math.floor(w/charW(el))-1)}
+function pth(text){var el=h('span',{cls:'pth',title:text,'data-full':text,text:text});return el}
+function fitAll(){CHARW=0;document.querySelectorAll('.pth').forEach(function(el){el.textContent=el.getAttribute('data-full');fitPth(el)})}
+var fitT=0;window.addEventListener('resize',function(){clearTimeout(fitT);fitT=setTimeout(fitAll,60)});
 function todoRow(f){var row=h('div',{cls:'todo'},h('span',{cls:'g',text:GLY.fix}),
-    h('div',null,h('div',{cls:'tt',text:plainTitle(f)}),h('div',{cls:'mut'},h('b',{cls:'ob',text:f.id}),document.createTextNode(f.at?' · '+f.at:''))));
+    h('div',null,h('div',{cls:'tt',text:plainTitle(f)}),h('div',{cls:'mut'},h('b',{cls:'ob',text:f.id}),f.at?pth(f.at):null)));
   var b=h('button',{type:'button',text:'show path'});b.addEventListener('click',function(){selectFinding(f)});row.appendChild(b);return row}
 function barRows(rows,max,onClick){var g=h('div');rows.forEach(function(r){var k=h('button',{cls:'k ghost',type:'button',title:r.key,text:r.label||r.key});if(onClick)k.addEventListener('click',function(){onClick(r)});else k.disabled=true;
     var t=h('div',{cls:'t'});r.parts.forEach(function(p){if(p[1])t.appendChild(h('span',{style:'width:'+(100*p[1]/Math.max(1,max)).toFixed(2)+'%;background:var('+p[0]+')'}))});
@@ -634,7 +668,7 @@ function drawDash(){svg.style.display='none';var o=$('dash');o.style.display='bl
   var todo=h('div',{cls:'card'},h('h2',null,h('span',null,document.createTextNode('To do · fix'),tip('Each item is a hole an outsider could use. Show path opens the code-to-database route for that finding.')),h('span',{text:(fixes.length!==allFix.length?fixes.length+' of ':'')+allFix.length+' item'+(allFix.length===1?'':'s')})));
   if(!fixes.length)todo.appendChild(h('div',{cls:'none',text:allFix.length?'No fix items in the selected cell.':'Nothing to fix.'}));
   fixes.slice(0,200).forEach(function(f){todo.appendChild(todoRow(f))});
-  if(fixes.length>200)todo.appendChild(h('div',{cls:'none',text:(fixes.length-200)+' more: use the list on the left.'}));
+  if(fixes.length>200)todo.appendChild(h('div',{cls:'none',text:(fixes.length-200)+' more: click Fix in the sidebar.'}));
   L.appendChild(todo);
   var rv=D.findings.filter(function(f){return f.tier==='review'&&inFilter(f)});
   L.appendChild(det('Review ('+rv.length+')','not urgent',null,rv.length?findingTable(rv.slice(0,200)):h('span',{cls:'muted',text:'Nothing to review.'})));
@@ -670,14 +704,14 @@ function drawDash(){svg.style.display='none';var o=$('dash');o.style.display='bl
     gr.appendChild(det('Supabase 2026-10-30 change',dg.length+' table'+(dg.length>1?'s':''),'The client uses these tables, and anon / authenticated hold the privileges below only through Supabase’s legacy default grants. Existing tables keep them; a table dropped and recreated after 2026-10-30, or a project rebuilt from these migrations, loses them until a migration GRANTs them explicitly.',bd))}
   var inf=D.findings.filter(function(f){return f.tier==='info'&&inFilter(f)});
   gr.appendChild(det('Info ('+inf.length+')',null,null,inf.length?findingTable(inf.slice(0,200)):h('span',{cls:'muted',text:'Nothing in this tier.'})));
-  if((D.notices||[]).length)gr.appendChild(det('Scan notices',D.notices.length,null,h('div',null,D.notices.map(function(n){return h('div',{text:n})}))));
+  if((D.notices||[]).length)gr.appendChild(det('Scan notices',D.notices.length,null,h.apply(null,['div',null].concat(D.notices.map(function(n){return h('div',{text:n})})))));
 }
 
-function draw(){if(state.view==='dash')drawDash();else if(state.view==='path'){if(state.node&&byId.has(state.node))drawPath();else emptyPath()}else if(state.view==='map')drawMap()}
+function draw(){if(state.view==='dash'){drawDash();fitAll()}else if(state.view==='path'){if(state.node&&byId.has(state.node))drawPath();else emptyPath()}else if(state.view==='map')drawMap()}
 
 /* ---------- tabs and theme ---------- */
 document.querySelectorAll('#tabs button').forEach(function(b){b.addEventListener('click',function(){setView(b.getAttribute('data-view'))})});
-function setView(v){state.view=v;document.querySelectorAll('#tabs button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===v)});
+function setView(v){state.view=v;renderList();document.querySelectorAll('#tabs button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===v)});
   var three=$('three');$('ov3d').hidden=v!=='3d';if(v==='3d'){three.hidden=false;svg.style.display='none';$('dash').style.display='none';renderCard();$('crumb').textContent='';$('crumb').appendChild(h('span',{cls:'lbl',text:'3D \u00b7 '}));$('crumb').appendChild(document.createTextNode('drag to spin, scroll to zoom, click a finding to fly to it'));open3d()}else{three.hidden=true;pause3d();renderCard();draw()}}
 /* ---------- look: colourway and mode (settings popover); every storage access is wrapped, the page works without it ---------- */
 var LS='tracegrid.';

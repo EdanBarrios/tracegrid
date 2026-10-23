@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { renderHtml, FG3D } from '../src/html.js';
+import { renderHtml, FG3D, truncLeft } from '../src/html.js';
 import { COLORWAYS, DEFAULT_COLORWAY } from '../src/colorways.js';
 
 const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tracegrid.js');
@@ -174,4 +174,19 @@ test('settings popover: gear next to the theme toggle with colourway, mode and a
   for (const id of ['cw', 'mode', 'rot']) assert.match(h, new RegExp(`id="${id}"`));
   assert.match(h, /Auto-rotate 3D/);
   assert.match(h, /<option value="auto">Auto/);
+});
+
+test('truncLeft keeps the file name and line, cuts from the left, and is embedded in the page', () => {
+  const p = 'supabase/migrations/20240201000000_billing.sql:29';
+  assert.equal(truncLeft(p, 100), p);
+  assert.equal(truncLeft(p, p.length), p);
+  const t = truncLeft(p, 34);
+  assert.equal(t, '\u2026/20240201000000_billing.sql:29');
+  assert.ok(t.length <= 34 && t.endsWith('billing.sql:29'));
+  assert.equal(truncLeft(p, 20), '\u2026' + p.slice(-19));
+  assert.equal(truncLeft(null, 5), '');
+  assert.equal(truncLeft('abc', 1), 'abc');
+  const h = renderHtml(hostile());
+  assert.ok(h.includes('function truncLeft'), 'helper shipped in the client script');
+  assert.ok(h.includes("title:text"), 'full path goes through the title attribute');
 });
