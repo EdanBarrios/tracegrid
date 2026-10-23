@@ -11,6 +11,8 @@
 // The look lives in one place: the THEME block of CSS variables at the top of CSS below (colours,
 // strokes, radii, sizes, fonts, and the 3D palette, which the script reads from the same variables).
 
+import { COLORWAYS, DEFAULT_COLORWAY, checkColorway } from './colorways.js';
+
 /** The pinned 3D library (bundles three.js). Checked with `curl -sI`; the hash is of the fetched file. */
 export const FG3D = {
   url: 'https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.1/dist/3d-force-graph.min.js',
@@ -22,9 +24,10 @@ export const embedJson = (v) => JSON.stringify(v).replace(/</g, '\\u003c').repla
 
 /**
  * @param {object} r the analysis result
- * @param {{ baseline?: { file: string, fresh: string[], fixed: string[] } | null }} [opts]
+ * @param {{ baseline?: { file: string, fresh: string[], fixed: string[] } | null, colorway?: string }} [opts]
  */
 export function renderHtml(r, opts = {}) {
+  const colorway = opts.colorway == null ? DEFAULT_COLORWAY : checkColorway(opts.colorway, 'renderHtml');
   const info = r.info || {};
   const unreadable = info.unreadable_files || [];
   const s = r.stats || {};
@@ -41,15 +44,21 @@ export function renderHtml(r, opts = {}) {
     findings: r.findings.map((f) => ({ rule: f.rule, id: f.id, node: f.node, tier: f.tier, level: f.level, at: f.at, note: f.note, message: f.message, roles: f.roles, usedBy: f.usedBy, securityDefiner: f.securityDefiner, sites: f.sites, confidence: f.confidence })),
     rules: r.rules.map(({ id, level, tier, title, why }) => ({ id, level, tier, title, why })),
     fg3d: FG3D,
+    colorway, colorways: COLORWAYS,
   };
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en" data-colorway="${colorway}" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>tracegrid: ${escapeHtml(r.root)}</title>
 <style>${CSS}</style></head><body>
 <div id="app">
 <aside id="side">
   <header>
-    <div class="brand"><span class="mark"></span><h1>TRACEGRID <span class="muted" id="rootname"></span></h1><button id="theme" class="ghost" title="Toggle light / dark">&#9680;</button></div>
+    <div class="brand"><span class="mark"></span><h1>TRACEGRID <span class="muted" id="rootname"></span></h1><button id="gear" class="ghost" title="Settings" aria-label="Settings" aria-haspopup="true" aria-expanded="false">&#9881;&#xFE0E;</button><button id="theme" class="ghost" title="Toggle light / dark" aria-label="Toggle light / dark">&#9680;</button>
+      <div id="settings" role="dialog" aria-label="Settings" hidden>
+        <label><span class="lbl">Colourway</span><select id="cw"></select></label>
+        <label><span class="lbl">Mode</span><select id="mode"><option value="auto">Auto (system)</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+        <label class="chk"><input type="checkbox" id="rot"> Auto-rotate 3D</label>
+      </div></div>
     <nav id="tabs" role="tablist">
       <button role="tab" data-view="dash" class="on">Dashboard</button>
       <button role="tab" data-view="path">Path</button>
@@ -84,23 +93,68 @@ export function renderHtml(r, opts = {}) {
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 const CSS = String.raw`
-/* ===== THEME: every colour, stroke, radius, size and font, for the 2D views and the 3D view. Swap this block to restyle. ===== */
+/* ===== THEME: every colour, stroke, radius, size and font, for the 2D views and the 3D view. Swap this block to restyle. =====
+   Structure (fonts, sizes, strokes) is in :root. Colour comes from the active colourway, set as data-colorway on <html>
+   (default graphite-amber), in a dark and a light variant (data-theme). Severity never rests on colour alone: the
+   glyphs ◆ Fix, ◇ Review and · Info always accompany it. The script reads the 3D palette from the same variables. */
 :root{
 --font:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
 --fs:12px;--fs-small:11px;--fs-label:10px;--fs-big:30px;--track:.16em;
---radius:0;--hair:1px;--pad:10px;
---bg:#050607;--grid:rgba(255,255,255,.04);--grid-size:24px;
---panel:#07080a;--panel2:#0f1113;--fg:#e6e8ea;--muted:#8d949b;--line:#25292d;--line2:#3c4248;
---node:#d6dade;--node-fill:#0a0b0d;--node-w:1.25;
---edge:#808993;--edge-hi:#f4f5f6;--edge-w:1.5;--edge-w-hi:2;--edge-label:#aab1b8;--arrow:7;
---fix:#ff3b30;--review:#ffb020;--info:#8d949b;--sel:#f4f5f6;--bar:#5f666e;
+--radius:0;--hair:1px;--pad:10px;--grid-size:24px;--fix-w:400;
+--arrow:7;--node-w:1.25;--edge-w:1.5;--edge-w-hi:2;
 --box-w:200;--box-h:36;--box-gap:14;--gutter:104;--map-r:5;--map-role-r:8;--map-group-r:20;
+}
+/* graphite-amber (default) */
+:root,:root[data-colorway=graphite-amber]{
+--bg:#0a0a0b;--grid:rgba(255,255,255,.03);--panel:#111113;--panel2:#18181b;--fg:#e9e7e2;--muted:#9a978f;--line:#26262a;--line2:#3a3a40;
+--node:#cfcdc7;--node-fill:#0f0f11;--edge:#7d7b76;--edge-hi:#f2f0ea;--edge-label:#a8a59d;
+--fix:#e3b867;--review:#9fb0c2;--info:#9a978f;--sel:#f2f0ea;--bar:#5f5d58;--accent:#9fb0c2;--fix-w:400;
+--3d-bg:#050506;--3d-node:#d8d6d0;--3d-link:#8f8d87;--3d-link-hi:#ffffff;--3d-label:#d8d6d0;--3d-star:#8f8d87;--3d-glow:.55;
+}
+:root[data-colorway=graphite-amber][data-theme=light]{
+--bg:#f6f5f1;--grid:rgba(0,0,0,.04);--panel:#fbfaf7;--panel2:#efede7;--fg:#1a1916;--muted:#5e5b53;--line:#dcd9d0;--line2:#bcb8ac;
+--node:#2a2925;--node-fill:#fbfaf7;--edge:#6d6a62;--edge-hi:#14130f;--edge-label:#55524a;
+--fix:#865700;--review:#3a5877;--info:#5e5b53;--sel:#14130f;--bar:#8d897e;--accent:#3a5877;
+--3d-bg:#ebe9e2;--3d-node:#2a2925;--3d-link:#6d6a62;--3d-link-hi:#14130f;--3d-label:#2a2925;--3d-star:#8d897e;--3d-glow:.2;
+}
+/* signal: the previous palette */
+:root[data-colorway=signal]{
+--bg:#050607;--grid:rgba(255,255,255,.04);--panel:#07080a;--panel2:#0f1113;--fg:#e6e8ea;--muted:#8d949b;--line:#25292d;--line2:#3c4248;
+--node:#d6dade;--node-fill:#0a0b0d;--edge:#808993;--edge-hi:#f4f5f6;--edge-label:#aab1b8;
+--fix:#ff3b30;--review:#ffb020;--info:#8d949b;--sel:#f4f5f6;--bar:#5f666e;--accent:#ffb020;--fix-w:400;
 --3d-bg:#020203;--3d-node:#dfe3e7;--3d-link:#9aa2ab;--3d-link-hi:#ffffff;--3d-label:#d9dde1;--3d-star:#9aa2ab;--3d-glow:.55;
 }
-:root[data-theme=light]{
+:root[data-colorway=signal][data-theme=light]{
 --bg:#f6f6f4;--grid:rgba(0,0,0,.05);--panel:#fbfbfa;--panel2:#efefec;--fg:#111315;--muted:#575d63;--line:#d6d7d4;--line2:#b5b8b9;
 --node:#202326;--node-fill:#fbfbfa;--edge:#6b737c;--edge-hi:#0b0c0d;--edge-label:#4a5056;
---fix:#d70015;--review:#a86400;--info:#6b737c;--sel:#0b0c0d;--bar:#8c9298;
+--fix:#c8001a;--review:#8f5400;--info:#575d63;--sel:#0b0c0d;--bar:#8c9298;--accent:#8f5400;
+--3d-bg:#eceeee;--3d-node:#202326;--3d-link:#6b737c;--3d-link-hi:#0b0c0d;--3d-label:#202326;--3d-star:#8c9298;--3d-glow:.2;
+}
+/* mono: greys, Fix told apart by white and weight */
+:root[data-colorway=mono]{
+--bg:#0a0a0a;--grid:rgba(255,255,255,.03);--panel:#111111;--panel2:#191919;--fg:#e8e8e8;--muted:#9a9a9a;--line:#262626;--line2:#3d3d3d;
+--node:#cccccc;--node-fill:#0f0f0f;--edge:#7a7a7a;--edge-hi:#ffffff;--edge-label:#a6a6a6;
+--fix:#ffffff;--review:#a8a8a8;--info:#8c8c8c;--sel:#ffffff;--bar:#5c5c5c;--accent:#ffffff;--fix-w:700;
+--3d-bg:#050505;--3d-node:#d0d0d0;--3d-link:#8a8a8a;--3d-link-hi:#ffffff;--3d-label:#d0d0d0;--3d-star:#8a8a8a;--3d-glow:.45;
+}
+:root[data-colorway=mono][data-theme=light]{
+--bg:#f4f4f4;--grid:rgba(0,0,0,.04);--panel:#fafafa;--panel2:#ececec;--fg:#111111;--muted:#555555;--line:#d8d8d8;--line2:#b8b8b8;
+--node:#222222;--node-fill:#fafafa;--edge:#6a6a6a;--edge-hi:#000000;--edge-label:#4d4d4d;
+--fix:#000000;--review:#505050;--info:#5a5a5a;--sel:#000000;--bar:#8a8a8a;--accent:#000000;
+--3d-bg:#e9e9e9;--3d-node:#222222;--3d-link:#6a6a6a;--3d-link-hi:#000000;--3d-label:#222222;--3d-star:#8a8a8a;--3d-glow:.15;
+}
+/* mint: graphite with a mint Fix */
+:root[data-colorway=mint]{
+--bg:#0a0a0b;--grid:rgba(255,255,255,.03);--panel:#111113;--panel2:#18181b;--fg:#e9e7e2;--muted:#9a978f;--line:#26262a;--line2:#3a3a40;
+--node:#cfcdc7;--node-fill:#0f0f11;--edge:#7d7b76;--edge-hi:#f2f0ea;--edge-label:#a8a59d;
+--fix:#72e0b0;--review:#8fa6b8;--info:#9a978f;--sel:#f2f0ea;--bar:#5f5d58;--accent:#8fa6b8;--fix-w:400;
+--3d-bg:#050506;--3d-node:#d8d6d0;--3d-link:#8f8d87;--3d-link-hi:#ffffff;--3d-label:#d8d6d0;--3d-star:#8f8d87;--3d-glow:.55;
+}
+:root[data-colorway=mint][data-theme=light]{
+--bg:#f6f5f1;--grid:rgba(0,0,0,.04);--panel:#fbfaf7;--panel2:#efede7;--fg:#1a1916;--muted:#5e5b53;--line:#dcd9d0;--line2:#bcb8ac;
+--node:#2a2925;--node-fill:#fbfaf7;--edge:#6d6a62;--edge-hi:#14130f;--edge-label:#55524a;
+--fix:#006a47;--review:#3a5877;--info:#5e5b53;--sel:#14130f;--bar:#8d897e;--accent:#3a5877;
+--3d-bg:#ebe9e2;--3d-node:#2a2925;--3d-link:#6d6a62;--3d-link-hi:#14130f;--3d-label:#2a2925;--3d-star:#8d897e;--3d-glow:.2;
 }
 /* ===== end THEME ===== */
 *{box-sizing:border-box;border-radius:var(--radius)}
@@ -121,7 +175,7 @@ button:focus-visible,input:focus-visible{outline:var(--hair) solid var(--sel);ou
 input[type=search]{width:100%;padding:5px 8px;border:var(--hair) solid var(--line2);background:var(--bg);color:var(--fg);font:inherit}
 #chips{display:flex;flex-wrap:wrap;gap:4px}
 .chip{font-size:var(--fs-label);letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;color:var(--muted);border-color:var(--line)}.chip.on{color:var(--fg);border-color:var(--line2)}
-.chip .dot{display:inline-block;width:7px;height:7px;margin-right:5px;vertical-align:0}
+.chip .dot{display:inline-block;margin-right:5px}
 #filter[hidden]{display:none}#filter{display:flex;align-items:center;gap:6px;font-size:var(--fs-small);border:var(--hair) solid var(--fg);padding:3px 6px}#filter span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #list{overflow:auto;flex:1;padding:0 0 16px}
 .grp{position:sticky;top:0;background:var(--panel);padding:9px 10px 4px;display:flex;justify-content:space-between;z-index:1;border-bottom:var(--hair) solid var(--line)}
@@ -156,6 +210,11 @@ path.e.hi{stroke:var(--edge-hi);stroke-width:var(--edge-w-hi)}path.e.dim{opacity
 svg .elabel text{fill:var(--edge-label);font-size:var(--fs-label)}svg .elabel rect{fill:var(--bg)}svg .elabel.hi text{fill:var(--fg)}
 svg .dimmed{opacity:.15}
 svg .mlabel{font-size:var(--fs-label);paint-order:stroke;stroke:var(--bg);stroke-width:3px}
+/* settings popover */
+.brand{position:relative}
+#settings{position:absolute;right:0;top:100%;margin-top:6px;z-index:20;background:var(--panel);border:var(--hair) solid var(--line2);padding:10px 12px;display:flex;flex-direction:column;gap:9px;min-width:210px}
+#settings[hidden]{display:none}#settings label{display:flex;flex-direction:column;gap:3px}#settings label.chk{flex-direction:row;align-items:center;gap:7px}
+#settings select{font:inherit;color:var(--fg);background:var(--bg);border:var(--hair) solid var(--line2);padding:3px 4px}
 /* dashboard */
 #dash{position:absolute;inset:0;overflow:auto;display:none}
 .dg{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));border-bottom:var(--hair) solid var(--line)}
@@ -223,6 +282,8 @@ var TIER_OF={error:'fix',warning:'review',note:'info'};
 D.findings.forEach(function(f){if(!f.tier)f.tier=TIER_OF[f.level]||'review'});
 var byNode=new Map();D.findings.forEach(function(f){if(!f.node)return;if(!byNode.has(f.node))byNode.set(f.node,[]);byNode.get(f.node).push(f)});
 var RANK={fix:0,review:1,info:2};
+/* Severity is never colour alone: a glyph always goes with it. */
+var GLY={fix:'\u25c6',review:'\u25c7',info:'\u00b7'};
 var worst=function(id){var fs=byNode.get(id);if(!fs)return null;return fs.slice().sort(function(a,b){return RANK[a.tier]-RANK[b.tier]})[0].tier};
 var COLNAME=['Code','Entry points','Database','Roles'];
 var COL={file:0,folder:0,nocaller:0,edge_function:1,bucket:1,external:1,api:1,table:2,view:2,'function':2,cron:2,policy:2,group:2,role:3,more:-1};
@@ -270,9 +331,9 @@ var kindOfFinding=function(f){var n=f.node&&byId.get(f.node);var t=n?n.type:'';r
 
 /* ---------- sidebar ---------- */
 var chips=$('chips');
-function chip(label,on,cls,onClick){var b=h('button',{cls:'chip'+(on?' on':''),type:'button'});if(cls)b.appendChild(h('span',{cls:'dot',style:'background:var('+cls+')'}));b.appendChild(document.createTextNode(label));b.addEventListener('click',onClick);return b}
+function chip(label,on,cls,onClick){var b=h('button',{cls:'chip'+(on?' on':''),type:'button'});if(cls)b.appendChild(h('span',{cls:'dot',style:'color:var('+cls[0]+')',text:cls[1]}));b.appendChild(document.createTextNode(label));b.addEventListener('click',onClick);return b}
 function renderChips(){chips.textContent='';
-  [['fix','Fix','--fix'],['review','Review','--review'],['info','Info','--info']].forEach(function(t){chips.appendChild(chip(t[1],state.tiers[t[0]],t[2],function(){state.tiers[t[0]]=!state.tiers[t[0]];renderChips();renderList()}))});
+  [['fix','Fix',['--fix',GLY.fix]],['review','Review',['--review',GLY.review]],['info','Info',['--info',GLY.info]]].forEach(function(t){chips.appendChild(chip(t[1],state.tiers[t[0]],t[2],function(){state.tiers[t[0]]=!state.tiers[t[0]];renderChips();renderList()}))});
   [['functions','Functions'],['tables','Tables'],['edge','Edge'],['other','Other']].forEach(function(k){chips.appendChild(chip(k[1],state.kinds[k[0]],null,function(){state.kinds[k[0]]=!state.kinds[k[0]];renderChips();renderList()}))})}
 function renderFilter(){var el=$('filter');el.textContent='';if(!state.filter){el.hidden=true;return}el.hidden=false;
   el.appendChild(h('span',{text:'FILTER \u00b7 '+state.filter.label}));var x=h('button',{type:'button',title:'Clear filter'},'\u00d7');x.addEventListener('click',function(){setFilter(null)});el.appendChild(x)}
@@ -284,11 +345,11 @@ function renderList(){list.textContent='';var q=state.q;var flt=state.filter;
   ['fix','review','info'].forEach(function(t){
     var all=D.findings.filter(function(f){return f.tier===t});
     var items=all.filter(function(f){return state.tiers[t]&&state.kinds[kindOfFinding(f)]&&matchQ(f,q)&&(!flt||(f.node&&flt.ids.has(f.node)))});
-    var g=h('div',{cls:'grp lbl'},h('span',{text:t==='fix'?'Fix':t==='review'?'Review':'Info'}),h('span',{text:(items.length!==all.length?items.length+' / ':'')+all.length}));
+    var g=h('div',{cls:'grp lbl'},h('span',{text:GLY[t]+' '+(t==='fix'?'Fix':t==='review'?'Review':'Info')}),h('span',{text:(items.length!==all.length?items.length+' / ':'')+all.length}));
     list.appendChild(g);
     if(!items.length){list.appendChild(h('div',{cls:'empty',text:all.length?'Hidden by filters.':'Nothing in this tier.'}));return}
     items.slice(0,600).forEach(function(f){
-      var b=h('button',{cls:'item t-'+t+(state.sel===f?' on':''),type:'button'},h('div',{cls:'r',text:f.rule}),h('div',{cls:'n',text:f.id}),h('div',{cls:'w',text:whyOf(f)}));
+      var b=h('button',{cls:'item t-'+t+(state.sel===f?' on':''),type:'button'},h('div',{cls:'r',text:GLY[t]+' '+f.rule}),h('div',{cls:'n',text:f.id}),h('div',{cls:'w',text:whyOf(f)}));
       b.addEventListener('click',function(){selectFinding(f)});list.appendChild(b)});
     if(items.length>600)list.appendChild(h('div',{cls:'empty',text:(items.length-600)+' more: narrow the search.'}));
   });
@@ -313,13 +374,13 @@ var card=$('card');
 function row(dl,k,v){if(v==null||v===''||(Array.isArray(v)&&!v.length))return;dl.appendChild(h('dt',{text:k}));dl.appendChild(h('dd',{text:Array.isArray(v)?v.join(', '):String(v)}))}
 function renderCard(){card.textContent='';var f=state.sel,n=state.node&&byId.get(state.node);if((!f&&!n)||state.view==='dash'){card.hidden=true;return}card.hidden=false;
   var x=h('button',{cls:'x',type:'button',title:'Close'},'\u00d7');x.addEventListener('click',clearSel);card.appendChild(x);
-  if(f){var r=rules.get(f.rule)||{};card.appendChild(h('div',null,h('span',{cls:'badge '+f.tier,text:f.tier}),h('span',{cls:'muted',text:f.rule})));
+  if(f){var r=rules.get(f.rule)||{};card.appendChild(h('div',null,h('span',{cls:'badge '+f.tier,text:GLY[f.tier]+' '+f.tier}),h('span',{cls:'muted',text:f.rule})));
     card.appendChild(h('h3',{text:f.id}));var dl=h('dl');row(dl,'Where',f.at);row(dl,'Callable by',f.roles);row(dl,'Used by',f.usedBy);if(f.securityDefiner)row(dl,'Runs as','owner (SECURITY DEFINER)');row(dl,'Call sites',f.sites);row(dl,'Confidence',f.confidence);row(dl,'Note',f.note||f.message);card.appendChild(dl);
     if(r.title)card.appendChild(h('p',{cls:'why'},h('strong',{text:r.title+'. '}),document.createTextNode(String(r.why||'').replace(/\x60/g,''))))}
   else{card.appendChild(h('div',null,h('span',{cls:'lbl',text:KINDNAME[n.type]||n.type})));card.appendChild(h('h3',{text:n.label}));var dl2=h('dl');row(dl2,'Where',n.at);
     ['rls','policies','securityDefiner','anon','authenticated','returns','verifyJwt','entryPoint','schedule','securityInvoker','defaultGrants'].forEach(function(a){if(n[a]!==undefined&&n[a]!==null)row(dl2,a,String(n[a]))});
     row(dl2,'Callers',String((inc.get(n.id)||[]).length));row(dl2,'Uses',String((out.get(n.id)||[]).length));card.appendChild(dl2);
-    var fs=byNode.get(n.id)||[];fs.forEach(function(ff){var b=h('button',{type:'button',cls:'ghost'},h('span',{cls:'badge '+ff.tier,text:ff.tier}),document.createTextNode(ff.rule));b.style.marginTop='6px';b.addEventListener('click',function(){selectFinding(ff)});card.appendChild(h('div',null,b))})}
+    var fs=byNode.get(n.id)||[];fs.forEach(function(ff){var b=h('button',{type:'button',cls:'ghost'},h('span',{cls:'badge '+ff.tier,text:GLY[ff.tier]+' '+ff.tier}),document.createTextNode(ff.rule));b.style.marginTop='6px';b.addEventListener('click',function(){selectFinding(ff)});card.appendChild(h('div',null,b))})}
 }
 
 /* ---------- path view: a finding's neighbourhood in columns ---------- */
@@ -582,9 +643,40 @@ function draw(){if(state.view==='dash')drawDash();else if(state.view==='path'){i
 document.querySelectorAll('#tabs button').forEach(function(b){b.addEventListener('click',function(){setView(b.getAttribute('data-view'))})});
 function setView(v){state.view=v;document.querySelectorAll('#tabs button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===v)});
   var three=$('three');$('ov3d').hidden=v!=='3d';if(v==='3d'){three.hidden=false;svg.style.display='none';$('dash').style.display='none';renderCard();$('crumb').textContent='';$('crumb').appendChild(h('span',{cls:'lbl',text:'3D \u00b7 '}));$('crumb').appendChild(document.createTextNode('drag to spin, scroll to zoom, click a finding to fly to it'));open3d()}else{three.hidden=true;pause3d();renderCard();draw()}}
-$('theme').addEventListener('click',function(){var r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'dark':'light';draw()});
+/* ---------- look: colourway and mode (settings popover); every storage access is wrapped, the page works without it ---------- */
+var LS='tracegrid.';
+function sget(k){try{return window.localStorage.getItem(LS+k)}catch(e){return null}}
+function sset(k,v){try{window.localStorage.setItem(LS+k,v)}catch(e){}}
+var okCw=function(c){return typeof c==='string'&&D.colorways.indexOf(c)>=0};
+var MODES=['auto','dark','light'];
+/* ?colorway=<name> beats the stored choice, which beats the default baked in at generation time. */
+function urlColorway(){try{return new URLSearchParams(location.search).get('colorway')}catch(e){return null}}
+var look={colorway:okCw(urlColorway())?urlColorway():okCw(sget('colorway'))?sget('colorway'):D.colorway,mode:MODES.indexOf(sget('mode'))>=0?sget('mode'):'dark',rot:sget('rotate')!=='0'};
+var mq=null;try{mq=window.matchMedia('(prefers-color-scheme: light)')}catch(e){}
+function resolvedTheme(){return look.mode==='auto'?(mq&&mq.matches?'light':'dark'):look.mode}
+function applyLook(){var r=document.documentElement;r.dataset.colorway=look.colorway;r.dataset.theme=resolvedTheme();recolor3d()}
+if(mq&&mq.addEventListener)mq.addEventListener('change',function(){if(look.mode==='auto')applyLook()});
+var cwSel=$('cw'),modeSel=$('mode'),rotBox=$('rot'),gear=$('gear'),pop=$('settings');
+D.colorways.forEach(function(c){cwSel.appendChild(h('option',{value:c,text:c}))});
+cwSel.value=look.colorway;modeSel.value=look.mode;rotBox.checked=look.rot;
+cwSel.addEventListener('change',function(){if(!okCw(cwSel.value))return;look.colorway=cwSel.value;sset('colorway',look.colorway);applyLook()});
+modeSel.addEventListener('change',function(){if(MODES.indexOf(modeSel.value)<0)return;look.mode=modeSel.value;sset('mode',look.mode);applyLook()});
+rotBox.addEventListener('change',function(){look.rot=rotBox.checked;sset('rotate',look.rot?'1':'0');var c=G3&&G3.controls();if(c)c.autoRotate=look.rot&&!hl});
+$('theme').addEventListener('click',function(){look.mode=resolvedTheme()==='light'?'dark':'light';modeSel.value=look.mode;sset('mode',look.mode);applyLook()});
+function closePop(){pop.hidden=true;gear.setAttribute('aria-expanded','false')}
+gear.addEventListener('click',function(ev){ev.stopPropagation();pop.hidden=!pop.hidden;gear.setAttribute('aria-expanded',pop.hidden?'false':'true');if(!pop.hidden)cwSel.focus()});
+pop.addEventListener('click',function(ev){ev.stopPropagation()});
+document.addEventListener('click',closePop);
+document.addEventListener('keydown',function(ev){if(ev.key==='Escape'&&!pop.hidden){closePop();gear.focus()}});
+/* The 3D scene keeps its own materials: re-read the palette and push it into them. */
+function recolor3d(){if(!G3||!nodes3)return;pal();G3.backgroundColor(P3.bg);
+  if(starMat){starMat.color.set(P3.star);if(starMat.emissive)starMat.emissive.set(P3.star)}
+  haloList.forEach(function(x){var c=base3(x.n);x.m.color.set(c);if(x.m.emissive)x.m.emissive.set(c)});
+  nodes3.forEach(function(n){var o=n.__threeObj;if(!o||!o.material||!o.material.emissive)return;o.material.emissive.set(base3(n));o.material.emissiveIntensity=P3.glow});
+  refresh3d()}
 
 /* ---------- 3D showcase (lazy, pinned, SRI) ---------- */
+var starMat=null,haloList=[];
 var G3=null,loading=false,nodes3=null,links3=null,hl=null,hlId=null,labelled=[],raf=0,lastPatch=0,interacted=false,K=null,shaped=false;
 var P3=null;function pal(){P3={bg:cssVar('--3d-bg'),node:cssVar('--3d-node'),link:cssVar('--3d-link'),hi:cssVar('--3d-link-hi'),star:cssVar('--3d-star'),fix:cssVar('--fix'),review:cssVar('--review'),glow:cssNum('--3d-glow',0.55)};return P3}
 var msg=function(t){var m=$('three-msg');if(t==null){m.hidden=true;return}m.hidden=false;m.textContent=t};
@@ -624,7 +716,7 @@ function start3d(){msg(null);pal();build3d();var el=$('three-canvas');
     .onNodeClick(function(n){var fs=byNode.get(n.id);if(fs)selectFinding(fs[0]);else if(byId.has(n.id))selectNode(n.id);else fly3d(n.id)})
     .graphData({nodes:nodes3,links:links3});
   }catch(e){msg('3D view could not start ('+String(e&&e.message||e)+'); the 2D views still work.');G3=null;return}
-  var ctl=G3.controls();if(ctl){ctl.autoRotate=true;ctl.autoRotateSpeed=0.45}
+  var ctl=G3.controls();if(ctl){ctl.autoRotate=look.rot;ctl.autoRotateSpeed=0.45}
   ['pointerdown','wheel','touchstart'].forEach(function(t){el.addEventListener(t,function(){interacted=true;var c=G3&&G3.controls();if(c)c.autoRotate=false;idle3()},{passive:true})});
   el.addEventListener('dblclick',function(){if(!hover3)overview3d()});
   window.addEventListener('resize',function(){if(G3&&state.view==='3d')G3.width(el.clientWidth).height(el.clientHeight)});
@@ -650,12 +742,12 @@ function recolor(){if(!shaped||!nodes3)return;nodes3.forEach(function(n){var o=n
 /* Glow on the default node materials, before the shapes replace them. */
 function patch(){if(!nodes3||shaped)return;nodes3.forEach(function(n){var o=n.__threeObj;if(!o||!o.material||o.material.__sr)return;var m=o.material;m.__sr=true;m.transparent=true;m.depthWrite=false;m.blending=2;if(m.emissive&&m.color){m.emissive.copy(m.color);m.emissiveIntensity=P3.glow}})}
 /* A sparse starfield, built from the same classes. */
-function stars(){try{if(!grab())return;var geo=new K.Sphere(1.2,4,3);var mat=new K.Mat({color:P3.star,transparent:true,opacity:0.5,depthWrite:false});if(mat.emissive)mat.emissive.set(P3.star);mat.__sr=true;
+function stars(){try{if(!grab())return;var geo=new K.Sphere(1.2,4,3);var mat=new K.Mat({color:P3.star,transparent:true,opacity:0.5,depthWrite:false});if(mat.emissive)mat.emissive.set(P3.star);mat.__sr=true;starMat=mat;
   var sc=G3.scene();for(var j=0;j<260;j++){var r=1400+Math.random()*1800,t=Math.random()*Math.PI*2,p=Math.acos(2*Math.random()-1);var m=new K.Mesh(geo,mat);m.position.set(r*Math.sin(p)*Math.cos(t),r*Math.sin(p)*Math.sin(t),r*Math.cos(p));var k=0.5+Math.random()*1.4;m.scale.set(k,k,k);sc.add(m)}}catch(e){/* decorative only */}}
 /* Soft halos (additive, translucent) around fix-tier nodes and hubs: the glow. */
 function halos(){try{if(!grab())return;var geo=new K.Sphere(1,16,12);var mats={};
   labelled.forEach(function(n){var obj=n.__threeObj;if(!obj)return;var c=base3(n);var m=mats[c];if(!m){m=new K.Mat({color:c,transparent:true,opacity:0.2,depthWrite:false});if(m.emissive)m.emissive.set(c);m.blending=2;m.__sr=true;mats[c]=m}
-    var halo=new K.Mesh(geo,m);var r=shaped?2.4:Math.cbrt(val3(n))*3*2.4;halo.scale.set(r,r,r);halo.__halo=true;obj.add(halo)})}catch(e){/* decorative only */}}
+    haloList.push({n:n,m:m});var halo=new K.Mesh(geo,m);var r=shaped?2.4:Math.cbrt(val3(n))*3*2.4;halo.scale.set(r,r,r);halo.__halo=true;obj.add(halo)})}catch(e){/* decorative only */}}
 var labelEls=new Map();
 function frame(ts){raf=requestAnimationFrame(frame);if(!G3)return;if(ts-lastPatch>500){patch();lastPatch=ts}
   var pulse=1+0.22*Math.sin(ts/420);nodes3.forEach(function(n){if(n.tier==='fix'&&n.__threeObj){var k=(shaped&&n.__s?n.__s:1)*pulse;n.__threeObj.scale.set(k,k,k)}});
@@ -667,14 +759,14 @@ function frame(ts){raf=requestAnimationFrame(frame);if(!G3)return;if(ts-lastPatc
     /* greedy collision avoidance: findings first (they come first in the list), then hubs */
     var w=Math.min(36,String(n.label).length)*6.2,bx={x0:p.x-w/2,x1:p.x+w/2,y0:p.y-24,y1:p.y-8};
     if(placed.some(function(b){return bx.x0<b.x1&&bx.x1>b.x0&&bx.y0<b.y1&&bx.y1>b.y0}))return;placed.push(bx);
-    var el=labelEls.get(n.id);if(!el){el=document.createElement('div');el.textContent=short(n.label,36);if(n.tier==='fix'||n.tier==='review')el.className=n.tier;box.appendChild(el);labelEls.set(n.id,el)}
+    var el=labelEls.get(n.id);if(!el){el=document.createElement('div');el.textContent=(GLY[n.tier]?GLY[n.tier]+' ':'')+short(n.label,36);if(n.tier==='fix'||n.tier==='review')el.className=n.tier;box.appendChild(el);labelEls.set(n.id,el)}
     el.style.left=p.x+'px';el.style.top=p.y+'px';el.style.display='block';keep.add(n.id)});
   labelEls.forEach(function(el,id){if(!keep.has(id))el.style.display='none'})}
 function resume3d(){if(!raf)raf=requestAnimationFrame(frame);if(G3&&G3.resumeAnimation)G3.resumeAnimation()}
 function pause3d(){if(raf){cancelAnimationFrame(raf);raf=0}if(G3&&G3.pauseAnimation)G3.pauseAnimation()}
 var hover3=null,idleT=0;
 /* Auto-rotate stays off while something is selected; on the overview it resumes after 5s without input. */
-function idle3(){clearTimeout(idleT);idleT=setTimeout(function(){var c=G3&&G3.controls();if(c&&!hl&&state.view==='3d')c.autoRotate=true},5000)}
+function idle3(){clearTimeout(idleT);idleT=setTimeout(function(){var c=G3&&G3.controls();if(c&&!hl&&look.rot&&state.view==='3d')c.autoRotate=true},5000)}
 function crumb3(){var b=$('three-crumb');b.textContent='';if(!hl||!hlId){b.hidden=true;return}var n=nodes3.find(function(x){return x.id===hlId});var a=h('a',{text:'overview'});a.addEventListener('click',overview3d);b.appendChild(a);b.appendChild(document.createTextNode(' \u203a '+(n?n.label:hlId)));b.hidden=false}
 function overview3d(){if(state.view!=='3d')return;state.sel=null;state.node=null;state.mapSel=null;renderList();renderCard();reset3d()}
 function fly3d(id){if(!G3||!nodes3)return;var n=nodes3.find(function(x){return x.id===id});if(!n){var b=byId.get(id);if(b&&b.type==='file')n=nodes3.find(function(x){return x.id==='folder:'+folderOf(b.label)})}if(!n||n.x==null)return;
@@ -694,6 +786,7 @@ function refresh3d(){if(!shaped)G3.nodeColor(col3);recolor();G3.linkColor(G3.lin
 var hp=new URLSearchParams(location.hash.slice(1));var hf=hp.get('f');
 if(hf){var order=D.findings.slice().sort(function(a,b){return RANK[a.tier]-RANK[b.tier]});var ff=hf==='first'?order[0]:D.findings.find(function(x){return x.rule+':'+x.id===hf});if(ff){state.sel=ff;state.node=ff.node||null;state.view='path'}}
 var hv=hp.get('view');if(hv==='dash'||hv==='path'||hv==='map'||hv==='3d')state.view=hv;
+applyLook();
 renderChips();renderFilter();renderList();
 if(state.view==='3d')setView('3d');else setView(state.view);
 })();
