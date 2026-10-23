@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isInside, realOr } from './safe.js';
+import { COLORWAYS } from './colorways.js';
 
 /** @typedef {{
  *   include: string[], exclude: string[], migrations: string, functionsDir: string,
@@ -23,6 +24,8 @@ export const DEFAULTS = {
   outputDirs: ['dist', 'build', 'out', 'ios', 'android', 'coverage', 'storybook-static'],
   // The Supabase project directory (the one holding config.toml, migrations/ and functions/).
   // Auto-detected: the only **/supabase/config.toml (or **/supabase/migrations) in the project.
+  // Colourway baked into graph.html as its default: graphite-amber, signal, mono or mint (--colorway overrides).
+  colorway: null,
   supabaseDir: null,
   // Override migrations / functions directories (default: <supabaseDir>/migrations, <supabaseDir>/functions).
   migrations: null,
@@ -116,6 +119,7 @@ export function validateConfig(c, file = 'config') {
       if (typeof x.reason !== 'string' || !x.reason.trim()) bad(`ignore.${cat}[${i}] (${x[key]}) needs a non-empty "reason"`);
     });
   }
+  if (c.colorway != null && !COLORWAYS.includes(c.colorway)) bad(`colorway: unknown colourway ${JSON.stringify(String(c.colorway)).slice(0, 60)} (expected ${COLORWAYS.join(', ')})`);
   if (!Array.isArray(c.plugins)) bad('plugins must be an array of paths');
   if (![null, 'auto', true, false, 'legacy', 'opt-in'].includes(c.supabaseDefaultGrants)) bad('supabaseDefaultGrants must be "auto", "legacy", "opt-in", true or false');
   for (const [t, l] of Object.entries(c.sarifLevels || {})) {

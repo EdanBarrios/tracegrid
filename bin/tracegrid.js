@@ -5,14 +5,15 @@ import { fileURLToPath } from 'node:url';
 import { analyze } from '../src/analyze.js';
 import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
-import { ConfigError } from '../src/config.js';
+import { ConfigError, loadConfig } from '../src/config.js';
 import { RuleError, pluginRefusal } from '../src/engine.js';
 import { oneLine } from '../src/safe.js';
 import { DbError } from '../src/db.js';
 import { readBaseline, writeBaseline, compareBaseline, BaselineError } from '../src/baseline.js';
+import { COLORWAYS } from '../src/colorways.js';
 import { toSarif, githubAnnotations, stepSummary } from '../src/ci.js';
 
-const HELP = `tracegrid [dir] [options]
+const HELP = () => `tracegrid [dir] [options]
 tracegrid --demo            run on the bundled example project
 tracegrid help              this text
 
@@ -37,6 +38,8 @@ Options:
   --sarif <file>       Also write SARIF 2.1.0 (for github/codeql-action/upload-sarif)
   --github             Print GitHub annotations (new findings only with --check) and
                        append a table to $GITHUB_STEP_SUMMARY
+  --colorway <name>    Default colourway of graph.html: ${COLORWAYS.join(', ')} (config key
+                       "colorway"; the page's settings and ?colorway= can still change it)
   --no-output          Do not write graph.json / report.md / graph.html
   --allow-plugins      Load the rule plugins listed in the config. Plugins are code from the
                        repository: never use this on pull requests (refused on GitHub
@@ -64,6 +67,7 @@ function parseArgs(argv) {
     else if (x === '--db-url') a.dbUrl = need(++i, x);
     else if (x === '--check') a.check = true;
     else if (x === '--check-level') { a.checkLevel = need(++i, x); if (!['fix', 'review'].includes(a.checkLevel)) fail(`--check-level must be fix or review (got ${oneLine(a.checkLevel)})`); }
+    else if (x === '--colorway') { a.colorway = need(++i, x); if (!COLORWAYS.includes(a.colorway)) fail(`--colorway must be one of ${COLORWAYS.join(', ')} (got ${oneLine(a.colorway)})`); }
     else if (x === '--sarif') a.sarif = need(++i, x);
     else if (x === '--github') a.github = true;
     else if (x === '--update-baseline') a.update = true;
@@ -74,7 +78,7 @@ function parseArgs(argv) {
     else if (x === '-h' || x === '--help') a.help = true;
     else if (x === '-v' || x === '--version') a.version = true;
     else if (x === '--demo') a.demo = true;
-    else if (x.startsWith('-')) fail(`Unknown option ${oneLine(x)}\n\n${HELP}`);
+    else if (x.startsWith('-')) fail(`Unknown option ${oneLine(x)}\n\n${HELP()}`);
     else if (a.dir === null && i === 0 && x === 'help') a.help = true;
     else if (a.dir === null && i === 0 && RESERVED.has(x)) fail(`tracegrid ${x}: not available in this version (the name is reserved for a later one). See tracegrid --help.`);
     else if (a.dir === null) a.dir = x;
@@ -93,7 +97,7 @@ const warn = (...lines) => { for (const l of lines) console.error(oneLine(l)); }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (args.help) { process.stdout.write(HELP); return 0; }
+  if (args.help) { process.stdout.write(HELP()); return 0; }
   if (args.version) {
     const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     console.log(pkg.version); return 0;
@@ -120,11 +124,13 @@ async function main() {
     if (fs.existsSync(baselinePath)) {
       try { const c = compareBaseline(readBaseline(baselinePath), r, 'review'); baseline = { file: path.basename(baselinePath), fresh: c.fresh.map((f) => f.fingerprint), fixed: c.fixed }; } catch { baseline = null; }
     }
+    let colorway = args.colorway;
+    if (!colorway) { try { colorway = loadConfig(root, args.config).colorway || undefined; } catch { colorway = undefined; } }
     const out = path.resolve(args.out);
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(path.join(out, 'graph.json'), JSON.stringify(r, null, 1));
     fs.writeFileSync(path.join(out, 'report.md'), renderReport(r));
-    fs.writeFileSync(path.join(out, 'graph.html'), renderHtml(r, { baseline }));
+    fs.writeFileSync(path.join(out, 'graph.html'), renderHtml(r, { baseline, colorway }));
     const rel = path.relative(process.cwd(), out);
     console.log(`Wrote ${rel && !rel.startsWith('..') ? rel : out}/{graph.json,report.md,graph.html}`);
   }
