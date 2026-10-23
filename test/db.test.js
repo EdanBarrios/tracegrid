@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readCatalog, fromDb, urlToEnv, CATALOG_SQL, DbError } from '../src/db.js';
+import { readCatalog, fromDb, urlToEnv, resolvePsql, CATALOG_SQL, DbError } from '../src/db.js';
 import { analyze } from '../src/analyze.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -74,7 +74,7 @@ test('without cron.job access, cron comes from migrations, with a warning', () =
   assert.match(c.notes.join(), /cron\.job is absent or not readable/);
 });
 
-test('CLI --db-url shells out to psql with env credentials and stdin SQL', () => {
+test('CLI --db-url shells out to psql with env credentials and stdin SQL', { skip: process.platform === 'win32' && 'needs an executable psql shim' }, () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-'));
   const log = path.join(tmp, 'psql.json');
   const env = { ...process.env, TRACEGRID_PSQL: fakePsql, FAKE_PSQL_FIXTURE: fixture, FAKE_PSQL_LOG: log };
@@ -97,5 +97,22 @@ test('CLI --db-url shells out to psql with env credentials and stdin SQL', () =>
   r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env: { ...env, TRACEGRID_PSQL: path.join(tmp, 'no-such-psql') }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /not found/);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('resolvePsql: absolute TRACEGRID_PSQL accepted; relative, in-project and node_modules refused; PATH searched (no spawn)', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tracegrid-rp-')));
+  const bindir = path.join(tmp, 'bin');
+  fs.mkdirSync(bindir);
+  const name = process.platform === 'win32' ? 'psql.exe' : 'psql';
+  const exe = path.join(bindir, name);
+  fs.writeFileSync(exe, '');
+  assert.equal(resolvePsql(undefined, { TRACEGRID_PSQL: exe }), exe);
+  assert.equal(resolvePsql(undefined, { PATH: bindir }), exe);
+  assert.throws(() => resolvePsql(undefined, { TRACEGRID_PSQL: 'psql' }), /absolute/);
+  assert.throws(() => resolvePsql(bindir, { TRACEGRID_PSQL: exe }), /inside the project/);
+  assert.throws(() => resolvePsql(undefined, { TRACEGRID_PSQL: path.join(tmp, 'node_modules', '.bin', name) }), /node_modules/);
+  assert.throws(() => resolvePsql(undefined, { PATH: path.join('relative', 'dir') }), DbError);
+  assert.throws(() => resolvePsql(undefined, { PATH: path.join(tmp, 'empty') }), /psql not found/);
   fs.rmSync(tmp, { recursive: true, force: true });
 });

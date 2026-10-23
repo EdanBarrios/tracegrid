@@ -61,7 +61,7 @@ test('versions agree; package ships the demo, skill and plugin; SARIF points at 
   assert.match(pkg.repository.url, /github\.com\/EdanBarrios\/tracegrid/);
   for (const f of ['examples', 'skills', '.claude-plugin']) assert.ok(pkg.files.includes(f), f);
   assert.equal(Object.keys(pkg.dependencies).join(), 'typescript');
-  const skill = fs.readFileSync(path.join(repo, 'skills/tracegrid/SKILL.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(repo, 'skills/tracegrid/SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(skill, /^---\nname: tracegrid\ndescription: /);
   assert.ok(skill.split('\n').length < 500);
   assert.match(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), /!\[[^\]]*\]\(https:\/\//);

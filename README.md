@@ -318,6 +318,7 @@ Use these alongside it; they answer different questions.
 
 Read these before revoking anything.
 
+- Catalog mode (`--db-url`) is tested on macOS and Linux; on Windows it needs psql.exe on PATH.
 - **"Nothing calls it" means "no call site tracegrid recognised".** Grep for the name before
   revoking. Static analysis, no type checker: findings are leads.
 - **What is scanned:** see the summary line and the code roots it prints. Code outside
