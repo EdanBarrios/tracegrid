@@ -206,12 +206,16 @@ export const coreRules = [
     id: 'edge-service-role-before-auth',
     level: 'warning',
     tier: 'review',
-    title: 'Edge functions that use a service_role client before any auth check',
-    why: 'A service_role / secret-key client bypasses RLS and grants. In these functions it is used before (or without) anything that looks like an auth or signature check (`auth.getUser`, `getClaims`, JWT or webhook signature verification, a `require*`/`authorize*` helper). Check that the caller is authorised before the privileged query. Text-based heuristic: a review item.',
+    title: 'Edge functions that use a service_role client before any recognised gate',
+    why: 'A service_role / secret-key client bypasses RLS and grants. Reported when the first data use of that client (a read, write, rpc, storage or auth.admin call) comes before every gate supareach recognises: `auth.getUser`, `getClaims`, JWT, webhook or HMAC verification (including `verify*Signature` helpers, svix / standard-webhooks headers, constant-time compares), a read through a client built from the anon key plus the request\'s Authorization header that returns or throws when the row is missing, a sha-256 hashed opaque token, a rate-limit RPC that returns early. Heuristic and text-based: a gate it does not recognise looks like no gate, and a recognised one is not proof the check is correct. A review item, never a fix.',
     run({ graph }) {
-      return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && n.serviceBeforeAuth)
-        .map((n) => ({ id: n.label, node: n.id, at: n.serviceBeforeAuth.at,
-          note: [n.serviceBeforeAuth.auth ? `first auth check at ${n.serviceBeforeAuth.auth}` : 'no auth check found in the function', n.verifyJwt === false ? 'verify_jwt = false: anyone can call it' : null].filter(Boolean).join('; ') }));
+      return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && n.serviceBeforeAuth).map((n) => {
+        const s = n.serviceBeforeAuth;
+        if (s.kind === 'inert') return { id: n.label, node: n.id, at: s.at, level: 'note', tier: 'info', message: 'only head or count requests through the service-role client; no row data returned' };
+        if (s.kind === 'before-gate') return { id: n.label, node: n.id, at: s.at, message: `service-role data use comes before the first recognised gate (${s.gate})` };
+        if (n.verifyJwt === false) return { id: n.label, node: n.id, at: s.at, message: 'no recognised gate and verify_jwt = false: verify this function authorizes callers' };
+        return { id: n.label, node: n.id, at: s.at, confidence: 'low', message: 'no recognised gate; verify_jwt = true is the only check found (any signed-in caller, or anyone holding the anon key, passes it)' };
+      });
     },
   },
   {
