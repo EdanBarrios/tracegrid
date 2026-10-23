@@ -138,23 +138,39 @@ function findDecl(id) {
     }
     if (ts.isClassLike(n) && n.name && n.name.text === name) return { kind: 'class', node: n };
     if (ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)) {
-      for (const s of n.statements) {
-        if (ts.isVariableStatement(s)) {
-          for (const d of s.declarationList.declarations) {
-            const b = bindingIn(d.name, name);
-            if (b) return { kind: 'var', decl: d, path: b, isConst: !!(s.declarationList.flags & ts.NodeFlags.Const), scope: n };
-          }
-        } else if ((ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s) || ts.isEnumDeclaration(s)) && s.name && s.name.text === name) {
-          return { kind: ts.isFunctionDeclaration(s) ? 'fn' : ts.isClassDeclaration(s) ? 'class' : 'enum', node: s };
-        } else if (ts.isImportDeclaration(s) && s.importClause && isStr(s.moduleSpecifier)) {
-          const ic = s.importClause;
-          const mod = s.moduleSpecifier.text;
-          if (ic.name && ic.name.text === name) return { kind: 'import', module: mod, imported: 'default' };
-          const nb = ic.namedBindings;
-          if (nb && ts.isNamespaceImport(nb) && nb.name.text === name) return { kind: 'import', module: mod, imported: '*' };
-          if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (el.name.text === name) return { kind: 'import', module: mod, imported: el.propertyName ? propName(el.propertyName) : el.name.text };
-        }
+      const hit = blockDecl(n, name);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/** Declarations directly in a block, memoized per block and name (findDecl is called for every identifier). */
+const blockDecls = new WeakMap();
+function blockDecl(n, name) {
+  let m = blockDecls.get(n);
+  if (!m) { m = new Map(); blockDecls.set(n, m); }
+  if (m.has(name)) return m.get(name);
+  const r = scanBlock(n, name);
+  m.set(name, r);
+  return r;
+}
+function scanBlock(n, name) {
+  for (const s of n.statements) {
+    if (ts.isVariableStatement(s)) {
+      for (const d of s.declarationList.declarations) {
+        const b = bindingIn(d.name, name);
+        if (b) return { kind: 'var', decl: d, path: b, isConst: !!(s.declarationList.flags & ts.NodeFlags.Const), scope: n };
       }
+    } else if ((ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s) || ts.isEnumDeclaration(s)) && s.name && s.name.text === name) {
+      return { kind: ts.isFunctionDeclaration(s) ? 'fn' : ts.isClassDeclaration(s) ? 'class' : 'enum', node: s };
+    } else if (ts.isImportDeclaration(s) && s.importClause && isStr(s.moduleSpecifier)) {
+      const ic = s.importClause;
+      const mod = s.moduleSpecifier.text;
+      if (ic.name && ic.name.text === name) return { kind: 'import', module: mod, imported: 'default' };
+      const nb = ic.namedBindings;
+      if (nb && ts.isNamespaceImport(nb) && nb.name.text === name) return { kind: 'import', module: mod, imported: '*' };
+      if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (el.name.text === name) return { kind: 'import', module: mod, imported: el.propertyName ? propName(el.propertyName) : el.name.text };
     }
   }
   return null;
@@ -1143,8 +1159,17 @@ export function makeResolver(root, known) {
     for (const c of [b, ...EXTS.map((e) => noJs + e), ...EXTS.map((e) => `${b}/index${e}`)]) if (known.has(c)) return c;
     return null;
   };
+  // Resolution depends only on the importing directory and the specifier.
+  const cache = new Map();
   return (from, spec) => {
     if (typeof spec !== 'string' || !spec) return null;
+    const key = `${path.posix.dirname(from)}\0${spec}`;
+    if (cache.has(key)) return cache.get(key);
+    const hit = resolve(from, spec);
+    cache.set(key, hit);
+    return hit;
+  };
+  function resolve(from, spec) {
     if (spec.startsWith('.')) return tryBase(path.posix.join(path.posix.dirname(from), spec));
     const bases = [];
     const cfg = nearest(path.posix.dirname(from) === '.' ? '' : path.posix.dirname(from));
@@ -1171,7 +1196,7 @@ export function makeResolver(root, known) {
     }
     for (const b of bases) { const hit = tryBase(b.replace(/^\.\//, '')); if (hit) return hit; }
     return null;
-  };
+  }
 }
 
 /** Scan a list of files relative to root: first-pass export summaries, then every file. */
