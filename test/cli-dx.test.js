@@ -64,7 +64,8 @@ test('versions agree; package ships the demo, skill and plugin; SARIF points at 
   const skill = fs.readFileSync(path.join(repo, 'skills/tracegrid/SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(skill, /^---\nname: tracegrid\ndescription: /);
   assert.ok(skill.split('\n').length < 500);
-  assert.match(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), /!\[[^\]]*\]\(https:\/\//);
+  assert.match(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), /<img src="docs\/dashboard\.png"/);
+  assert.ok(fs.existsSync(path.join(repo, 'docs/dashboard.png')));
   const s = toSarif({ rules: [], findings: [], source: 'migrations' });
   assert.equal(s.runs[0].tool.driver.informationUri, 'https://github.com/EdanBarrios/tracegrid');
 });
