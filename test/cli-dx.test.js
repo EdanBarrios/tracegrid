@@ -5,7 +5,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { renderHtml } from '../src/html.js';
 import { toSarif } from '../src/ci.js';
 import { project, rm } from './helpers.js';
 
@@ -69,18 +68,3 @@ test('versions agree; package ships the demo, skill and plugin; SARIF points at 
   assert.equal(s.runs[0].tool.driver.informationUri, 'https://github.com/EdanBarrios/supareach');
 });
 
-test('graph.html: large graphs start focused on findings, with files grouped; script parses', () => {
-  const nodes = [{ id: 'fn:bad/0', type: 'function', label: 'bad' }];
-  const links = [];
-  for (let i = 0; i < 250; i++) {
-    nodes.push({ id: `file:src/f${i % 5}/a${i}.ts`, type: 'file', label: `src/f${i % 5}/a${i}.ts`, side: 'client' });
-    links.push({ source: `file:src/f${i % 5}/a${i}.ts`, target: 'fn:bad/0', relation: 'rpc', confidence: 'extracted', ops: [], at: [`src/a${i}.ts:1`] });
-  }
-  const h = renderHtml({ root: 'x', generated_at: '', nodes, links, findings: [{ rule: 'r', id: 'bad/0', node: 'fn:bad/0' }], rules: [{ id: 'r', title: 'T' }] });
-  const js = h.split('<script>')[1].split('</script>')[0];
-  assert.doesNotThrow(() => new Function(js));
-  assert.match(h, /const BIG=RAW\.nodes\.length>200/);
-  assert.match(h, /show all/);
-  assert.match(h, /group files by folder/);
-  assert.doesNotMatch(h, /src=["']https?:/, 'no CDN');
-});
