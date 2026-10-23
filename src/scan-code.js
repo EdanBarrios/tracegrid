@@ -779,7 +779,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       if (escapes) return;
       if (ts.isIdentifier(n) && n.text === nameNode.text && n !== nameNode) {
         const p = n.parent;
-        const memberName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || ((ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isPropertySignature(p)) && p.name === n));
+        const memberName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isQualifiedName(p) && p.right === n) || ((ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isPropertySignature(p)) && p.name === n));
         if (!memberName && !(p && ts.isCallExpression(p) && unwrap(p.expression) === n) && !(p && (ts.isParenthesizedExpression(p) || ts.isNonNullExpression(p)) && p.parent && ts.isCallExpression(p.parent))) escapes = true;
       }
       ts.forEachChild(n, walk);

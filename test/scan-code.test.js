@@ -104,6 +104,7 @@ test('R4 local wrappers whose call sites all pass literals leave no unresolved s
     keyofTypeof: `declare const db: any; const FNS = { a: 1, b: 2 } as const; const call = (fn: keyof typeof FNS) => db.rpc(fn);`,
     arrayIndex: `declare const db: any; const FNS = ['a', 'b'] as const; const call = (fn: (typeof FNS)[number]) => db.rpc(fn);`,
     chained: `import { supabase } from './c'; const rpc = (name: string, args?: object) => (supabase as any).rpc(name, args); async function call<T>(name: string, args?: object): Promise<T> { const { data, error } = await rpc(name, args); if (error) throw error; return data as T; } export const x = () => call<number>('a'); export const y = (k: boolean) => call<number>(k ? 'b' : 'a', {});`,
+    typeofMember: `import { supabase } from './c'; async function rpc<T extends Parameters<typeof supabase.rpc>[0]>(fn: T, args: Record<string, unknown>) { const { error } = await (supabase.rpc as any)(fn, args); if (error) throw error; } export const a = () => rpc('a', {}); export const b = () => rpc('b', {});`,
     useCallback: `declare const supabase: any; declare const useCallback: any; export function C() { const call = useCallback((fn: string) => supabase.rpc(fn), []); call('a'); call('b'); }`,
   };
   for (const [k, src] of Object.entries(cases)) {
