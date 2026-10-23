@@ -116,7 +116,8 @@ test('F11 default excludes skip build output at package roots but not source fol
 
 test('F12 parse errors, UTF-16 files and huge files are handled and reported', async () => {
   const r = await run({ 'src/a.ts': `declare const supabase: any;\nfunction broken( {\nsupabase.rpc('target_fn');\n` });
-  assert.ok(r.info.parse_errors.length === 1 && r.warnings.some((w) => /could not be parsed completely/.test(w)));
+  assert.ok(r.info.unreadable_files.length === 1 && r.info.unreadable_files[0].partial && r.warnings.some((w) => /could not be parsed completely/.test(w)));
+  assert.ok(!uncalled(r).has('target_fn'), 'the call swallowed by error recovery is recovered from the text');
   const buf = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`declare const supabase: any; supabase.rpc('target_fn');`, 'utf16le')]);
   assert.ok(!uncalled(await run({ 'src/a.ts': buf })).has('target_fn'));
   // >130k call sites in one file (under the 2 MB cap) used to overflow the stack in push(...spread)

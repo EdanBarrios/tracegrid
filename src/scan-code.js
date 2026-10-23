@@ -716,6 +716,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       return;
     }
     const sch = extra.schema;
+    if (sch === '*') unresolved.push({ kind: 'schema', file, line: lineOf(node), expr: short(node.getText(sf)), note: `${k.kind} matched in any exposed schema` });
     const q = sch && sch !== 'public' && sch !== '*' ? `${sch}.` : '';
     for (const name of r.vals) {
       calls.push({ kind: k.kind, name: q + name, file, line: lineOf(node), confidence: r.conf, ...extra, ...(sch === '*' ? { anySchema: true, weak: true } : {}), ...flags, ...(r.hatch ? { via: 'hatch' } : {}) });
@@ -803,6 +804,21 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
     ts.forEachChild(n, visit);
   }
   visit(sf);
+
+  // After a syntax error the parser's recovery can swallow calls. Recover literal-name calls from the
+  // raw text after the first error, as weak (ambiguous, link-only) call sites.
+  if (diags.length) {
+    const firstErr = Math.min(...diags.map((x) => x.start || 0));
+    const seen = new Set(calls.map((c) => `${c.kind}|${c.name}|${c.line}`));
+    const re = /\.(rpc|from|invoke)\s*\(\s*(['"`])([A-Za-z0-9_.-]+)\2/g;
+    re.lastIndex = Math.max(0, text.lastIndexOf('\n', firstErr));
+    for (let m; (m = re.exec(text));) {
+      const kind = m[1] === 'rpc' ? 'rpc' : m[1] === 'invoke' ? 'invoke' : 'table';
+      const line = sf.getLineAndCharacterOfPosition(m.index).line + 1;
+      if (seen.has(`${kind}|${m[3]}|${line}`)) continue;
+      calls.push({ kind, name: m[3], file, line, confidence: 'ambiguous', via: 'syntax-error recovery', weak: true });
+    }
+  }
 
   const suppress = [];
   const invalid = [];

@@ -86,19 +86,14 @@ export function renderReport(r) {
     for (const f of skipped) L.push(`- ${code(f.file)}: ${esc(f.reason)}`);
     L.push('');
   }
-  if ((r.info.parse_errors || []).length) {
-    L.push(`## Files with syntax errors (${r.info.parse_errors.length})`, '', 'Parsed with error recovery; calls after the error may be missing.', '');
-    for (const f of r.info.parse_errors) L.push(`- ${code(`${f.file}:${f.line}`)}: ${esc(f.error)}`);
-    L.push('');
-  }
   if (r.info.invalid_hatches.length) {
     L.push(`## Hatches that were not applied (${r.info.invalid_hatches.length})`, '');
     for (const h of r.info.invalid_hatches) L.push(`- ${code(`${h.file}:${h.line}`)}: ${esc(h.error)}`);
     L.push('');
   }
   if (r.info.unreadable_files.length) {
-    L.push('## Files that failed to parse', '');
-    for (const f of r.info.unreadable_files) L.push(`- ${code(f.file)}: ${esc(f.error)}`);
+    L.push(`## Files not scanned, or scanned only partly (${r.info.unreadable_files.length})`, '', 'Calls in these files may be missing, so a function they call can appear uncalled.', '');
+    for (const f of r.info.unreadable_files) L.push(`- ${code(f.line ? `${f.file}:${f.line}` : f.file)}: ${esc(f.error)}`);
     L.push('');
   }
   return L.join('\n');

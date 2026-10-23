@@ -288,8 +288,8 @@ export async function analyze(root, opts = {}) {
     unresolved_dynamic_calls: code.unresolved,
     unparsed_sql: catalog.source === 'migrations' ? catalog.unparsed : [],
     dynamic_sql_applied: catalog.source === 'migrations' ? sql.dynamicApplied : [],
-    unreadable_files: code.failed,
-    parse_errors: code.parseErrors,
+    // Files not scanned at all, and files scanned only partly (syntax errors: `partial: true`).
+    unreadable_files: [...code.failed, ...code.parseErrors.map((f) => ({ ...f, partial: true }))],
     skipped_migrations: sql.skipped,
     external_entry_points: [...entryByName.values()].map(({ name, reason, source }) => ({ id: name, reason, source })),
     invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid, ...entryInvalid],

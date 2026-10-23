@@ -57,7 +57,7 @@ export function toSarif(r, { version = '0.0.0', prefix = '', fallbackUri = 'supa
         executionSuccessful: !(r.scope_problems || []).length,
         toolExecutionNotifications: [
           ...(r.scope_problems || []).map((t) => ({ level: 'error', message: { text: t } })),
-          ...[...((r.info && r.info.unreadable_files) || []), ...((r.info && r.info.parse_errors) || [])].map((f) => ({
+          ...((r.info && r.info.unreadable_files) || []).map((f) => ({
             level: 'warning', message: { text: `${f.file}: ${f.error}` },
             locations: [{ physicalLocation: { artifactLocation: { uri: uriOf(prefix ? `${prefix}/${f.file}` : f.file), uriBaseId: '%SRCROOT%' }, ...(f.line ? { region: { startLine: f.line } } : {}) } }],
           })),
