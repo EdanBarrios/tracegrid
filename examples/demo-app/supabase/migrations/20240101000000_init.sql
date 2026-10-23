@@ -1,4 +1,4 @@
--- Demo schema: projects, tasks, invoices. Synthetic, for supagraph tests.
+-- Demo schema: projects, tasks, invoices. Synthetic, for supareach tests.
 create table public.projects (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null,

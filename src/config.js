@@ -26,7 +26,7 @@ export const DEFAULTS = {
 
 /** @param {string} root @param {string} [file] @returns {Config} */
 export function loadConfig(root, file) {
-  const p = file ? path.resolve(file) : path.join(root, 'supagraph.config.json');
+  const p = file ? path.resolve(file) : path.join(root, 'supareach.config.json');
   if (!fs.existsSync(p)) return structuredClone(DEFAULTS);
   const user = JSON.parse(fs.readFileSync(p, 'utf8'));
   const c = structuredClone(DEFAULTS);

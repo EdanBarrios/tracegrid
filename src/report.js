@@ -13,7 +13,7 @@ const esc = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/`/g, "'");
 
 export function renderReport(r) {
   const L = [];
-  L.push(`# supagraph report: ${r.root}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
+  L.push(`# supareach report: ${r.root}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
   L.push('## Summary', '', '| Finding | Count |', '|---|---|');
   for (const [k, n] of Object.entries(r.counts)) L.push(`| ${TITLES[k][0]} | ${n} |`);
   L.push(`| Storage buckets referenced (info) | ${r.info.storage_buckets.length} |`);

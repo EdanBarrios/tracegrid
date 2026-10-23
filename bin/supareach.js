@@ -5,14 +5,14 @@ import { analyze, GATED, SCHEMA_VERSION } from '../src/analyze.js';
 import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
 
-const HELP = `supagraph [dir] [options]
+const HELP = `supareach [dir] [options]
 
 Map how app code reaches a Supabase schema and report dead or risky surface.
 
 Options:
-  --out <dir>          Output directory (default ./supagraph-out)
-  --config <file>      Config file (default <dir>/supagraph.config.json)
-  --baseline <file>    Baseline file (default <dir>/supagraph.baseline.json)
+  --out <dir>          Output directory (default ./supareach-out)
+  --config <file>      Config file (default <dir>/supareach.config.json)
+  --baseline <file>    Baseline file (default <dir>/supareach.baseline.json)
   --check              Exit 1 if any finding count rose above the baseline
   --update-baseline    Write the current counts to the baseline file
   --no-output          Do not write graph.json / report.md / graph.html
@@ -21,7 +21,7 @@ Options:
 `;
 
 function parseArgs(argv) {
-  const a = { dir: '.', out: 'supagraph-out', output: true };
+  const a = { dir: '.', out: 'supareach-out', output: true };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
     if (x === '--out') a.out = argv[++i];
@@ -61,7 +61,7 @@ if (args.output) {
 console.log(`${r.stats.files_scanned} files, ${r.stats.call_sites} call sites (${r.stats.unresolved} unresolved), ${r.stats.migrations} migrations (${r.stats.sql_unparsed} statements not understood), ${r.stats.edge_functions} edge functions`);
 for (const k of GATED) console.log(`  ${k.padEnd(32)} ${r.counts[k]}`);
 
-const baselinePath = path.resolve(args.baseline || path.join(root, 'supagraph.baseline.json'));
+const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
 if (args.update) {
   const b = { schema_version: SCHEMA_VERSION, counts: r.counts, ids: Object.fromEntries(GATED.map((k) => [k, r.findings[k].map((f) => f.id).sort()])) };
   fs.writeFileSync(baselinePath, JSON.stringify(b, null, 2) + '\n');

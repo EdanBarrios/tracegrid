@@ -9,7 +9,7 @@ import { analyze } from '../src/analyze.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.join(here, '..', 'examples', 'demo-app');
-const bin = path.join(here, '..', 'bin', 'supagraph.js');
+const bin = path.join(here, '..', 'bin', 'supareach.js');
 
 test('demo app findings', () => {
   const r = analyze(demo);
@@ -31,7 +31,7 @@ test('demo app findings', () => {
 });
 
 test('CLI writes outputs and --check gates on rising counts', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supagraph-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
   const out = path.join(tmp, 'out');
   const baseline = path.join(tmp, 'baseline.json');
   execFileSync(process.execPath, [bin, demo, '--out', out, '--baseline', baseline, '--update-baseline'], { stdio: 'pipe' });

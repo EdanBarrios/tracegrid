@@ -4,7 +4,7 @@ export function renderHtml(r) {
   const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16));
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>supagraph: ${escapeHtml(r.root)}</title>
+<title>supareach: ${escapeHtml(r.root)}</title>
 <style>
 :root{--bg:#fbfbfa;--fg:#1c1c1c;--muted:#6b6b6b;--panel:#ffffff;--line:#d9d9d6;--edge:rgba(60,60,60,.18);--hi:#d9480f;
 --table:#2f7d32;--view:#5c9e5f;--function:#1f5fbf;--edge_function:#8a3ffc;--file:#9a9a9a;--bucket:#b7791f;--cron:#c2185b;--bad:#e03131}
@@ -23,7 +23,7 @@ a.n{color:var(--fg);text-decoration:underline dotted;cursor:pointer}.muted{color
 #c{flex:1;display:block;cursor:grab;min-width:0}button{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 8px;cursor:pointer}
 @media (max-width:700px){#app{flex-direction:column}#side{width:100%;max-width:none;height:45%}}
 </style></head><body><div id="app"><aside id="side"><header>
-<h1>supagraph: ${escapeHtml(r.root)} <button id="fit" title="Fit graph to view">fit</button> <button id="theme" title="Toggle theme">theme</button></h1>
+<h1>supareach: ${escapeHtml(r.root)} <button id="fit" title="Fit graph to view">fit</button> <button id="theme" title="Toggle theme">theme</button></h1>
 <input id="q" type="search" placeholder="Search nodes (Enter to jump)"><div id="types"></div></header><div id="info"></div></aside>
 <canvas id="c"></canvas></div>
 <script type="application/json" id="data">${json}</script>

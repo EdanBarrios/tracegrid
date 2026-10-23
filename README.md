@@ -1,4 +1,4 @@
-# supagraph
+# supareach
 
 **v0, best effort.** A small, offline CLI that maps how your app code reaches your
 Supabase project (tables, RPCs, edge functions, storage buckets, cron jobs) and
@@ -11,7 +11,7 @@ No AI, no network, no database connection. It reads your source files and
 
 In a Supabase app the browser talks to Postgres directly, so your attack surface is
 whatever PostgREST exposes: every table and every function `anon` or `authenticated`
-can reach. Over time that drifts from what the app actually uses. supagraph answers:
+can reach. Over time that drifts from what the app actually uses. supareach answers:
 
 - Which functions can a signed-in (or anonymous) user call that **nothing in the app calls**?
 - Which tables does the client query with **RLS off**, or RLS on and **no policies**?
@@ -27,11 +27,11 @@ alone does not do that.
 
 ```sh
 cd your-supabase-app
-npx supagraph            # scans ./src and ./supabase
-open supagraph-out/graph.html
+npx supareach            # scans ./src and ./supabase
+open supareach-out/graph.html
 ```
 
-Output in `./supagraph-out/`:
+Output in `./supareach-out/`:
 
 | File | What |
 |---|---|
@@ -41,7 +41,7 @@ Output in `./supagraph-out/`:
 
 ![screenshot placeholder](docs/screenshot.png)
 
-Try it on the bundled example: `npx supagraph examples/demo-app`.
+Try it on the bundled example: `npx supareach examples/demo-app`.
 
 ## What it reads
 
@@ -71,7 +71,7 @@ and simple `DO` blocks. Statements it does not understand are listed in the repo
 A function counts as "called" if code calls it via RPC, or a cron job, trigger, policy, view,
 column default or another SQL function references it.
 
-## Config: `supagraph.config.json` (optional)
+## Config: `supareach.config.json` (optional)
 
 ```json
 {
@@ -96,8 +96,8 @@ Webhooks, auth hooks and health checks have no caller by design: put them in
 ## CI: fail when things get worse
 
 ```sh
-npx supagraph --update-baseline      # writes supagraph.baseline.json; commit it
-npx supagraph --check --no-output    # exit 1 if any finding count rose
+npx supareach --update-baseline      # writes supareach.baseline.json; commit it
+npx supareach --check --no-output    # exit 1 if any finding count rose
 ```
 
 `--check` compares counts per finding type and prints the new items. Lowering a count
@@ -107,25 +107,25 @@ unresolved names, unparsed SQL) are not gated.
 GitHub Action:
 
 ```yaml
-name: supagraph
+name: supareach
 on: pull_request
 jobs:
-  supagraph:
+  supareach:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: npx --yes supagraph@0 --check
+      - run: npx --yes supareach@0 --check
       - if: always()
         uses: actions/upload-artifact@v4
-        with: { name: supagraph, path: supagraph-out }
+        with: { name: supareach, path: supareach-out }
 ```
 
 ## Options
 
 ```
-supagraph [dir] [--out dir] [--config file] [--baseline file]
+supareach [dir] [--out dir] [--config file] [--baseline file]
           [--check] [--update-baseline] [--no-output]
 ```
 
@@ -158,7 +158,7 @@ supagraph [dir] [--out dir] [--config file] [--baseline file]
 ```sh
 npm install
 npm test           # node:test, no other dev dependencies
-node bin/supagraph.js examples/demo-app
+node bin/supareach.js examples/demo-app
 ```
 
 Node 18+, ESM, plain JavaScript. The only dependency is `typescript` (for its parser).
