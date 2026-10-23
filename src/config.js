@@ -21,7 +21,9 @@ export const DEFAULTS = {
   // Supabase grants EXECUTE on new public functions to anon and authenticated by default
   // (on top of Postgres' default EXECUTE to PUBLIC). Set false for a vanilla Postgres model.
   supabaseDefaultGrants: true,
-  ignore: { functions: [], edgeFunctions: [], tables: [], rpcs: [] },
+  // Every ignore needs a reason: { "name": "...", "reason": "..." }; `findings` takes a full
+  // fingerprint ("<rule>:<subject>") and works for any rule, plugins included.
+  ignore: { functions: [], edgeFunctions: [], tables: [], rpcs: [], findings: [] },
   // Extra rule modules (paths relative to the config file). Each exports `rules`: see src/engine.js.
   plugins: [],
 };
@@ -37,7 +39,26 @@ export function loadConfig(root, file) {
     if (k === 'ignore' || k === 'wrappers') c[k] = { ...c[k], ...user[k] };
     else c[k] = user[k];
   }
+  validateConfig(c, p);
   return c;
+}
+
+export class ConfigError extends Error {}
+
+/** Throw a ConfigError naming the first problem. */
+export function validateConfig(c, file = 'config') {
+  const bad = (msg) => { throw new ConfigError(`${file}: ${msg}`); };
+  for (const [cat, list] of Object.entries(c.ignore || {})) {
+    if (!(cat in DEFAULTS.ignore)) bad(`ignore.${cat}: unknown list (expected ${Object.keys(DEFAULTS.ignore).join(', ')})`);
+    if (!Array.isArray(list)) bad(`ignore.${cat} must be an array`);
+    const key = cat === 'findings' ? 'id' : 'name';
+    list.forEach((x, i) => {
+      if (typeof x === 'string') bad(`ignore.${cat}[${i}] is a bare string; write { "${key}": ${JSON.stringify(x)}, "reason": "why it is fine" }`);
+      if (!x || typeof x[key] !== 'string' || !x[key]) bad(`ignore.${cat}[${i}] needs "${key}"`);
+      if (typeof x.reason !== 'string' || !x.reason.trim()) bad(`ignore.${cat}[${i}] (${x[key]}) needs a non-empty "reason"`);
+    });
+  }
+  if (!Array.isArray(c.plugins)) bad('plugins must be an array of paths');
 }
 
 /** Convert a glob (supports **, *, ?, {a,b}) to a RegExp over forward-slash paths. */

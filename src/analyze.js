@@ -17,6 +17,23 @@ const IGNORE_CATEGORY = {
   'uncalled-edge-function': 'edgeFunctions',
 };
 
+/** Subject match: exact, or a function name matching any of its overloads (`name/arity`). */
+const sameSubject = (id, name) => id === name || id.startsWith(name + '/');
+
+function makeSuppressor(cfg, hatches) {
+  const ign = cfg.ignore;
+  return (f) => {
+    const byId = (ign.findings || []).find((x) => x.id === f.fingerprint);
+    if (byId) return `config ignore.findings: ${byId.reason}`;
+    const cat = IGNORE_CATEGORY[f.rule];
+    const hit = cat && (ign[cat] || []).find((x) => sameSubject(f.id, x.name));
+    if (hit) return `config ignore.${cat}: ${hit.reason}`;
+    const h = hatches.find((x) => x.rule === f.rule && sameSubject(f.id, x.subject));
+    if (h) return `hatch at ${h.at}: ${h.reason}`;
+    return null;
+  };
+}
+
 export async function analyze(root, opts = {}) {
   root = path.resolve(root);
   const cfg = opts.config || loadConfig(root, opts.configFile);
@@ -124,11 +141,7 @@ export async function analyze(root, opts = {}) {
 
   // Findings
   const graph = makeGraph([...nodes.values()], [...edges.values()]);
-  const ign = cfg.ignore;
-  const suppress = (f) => {
-    const cat = IGNORE_CATEGORY[f.rule];
-    return cat && (ign[cat] || []).includes(f.id) ? `ignore.${cat}` : null;
-  };
+  const suppress = makeSuppressor(cfg, [...code.hatches.suppress, ...sql.hatches.suppress]);
   const ran = runRules([...coreRules, ...plugins], { graph, catalog: sql, config: cfg, root }, suppress);
 
   const info = {
@@ -136,6 +149,7 @@ export async function analyze(root, opts = {}) {
     unresolved_dynamic_calls: code.unresolved,
     unparsed_sql: sql.unparsed,
     unreadable_files: code.failed,
+    invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid],
   };
 
   const stats = {

@@ -2,6 +2,7 @@
 // Regex over a light tokenizer: conservative, and anything it does not understand is reported.
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseHatches } from './hatches.js';
 
 const IDENT = String.raw`(?:"[^"]+"|[A-Za-z_][\w$]*)`;
 const QNAME = String.raw`(${IDENT}(?:\s*\.\s*${IDENT})?)`;
@@ -207,6 +208,7 @@ export function createState(opts = {}) {
   const sb = opts.supabaseDefaultGrants !== false;
   return {
     tables: new Map(), views: new Map(), functions: new Map(), triggers: new Map(), cron: new Map(), dynamic: [],
+    hatches: { suppress: [], invalid: [] },
     defaults: { public: true, anon: sb, authenticated: sb },
     unparsed: [], stats: { files: 0, statements: 0, handled: 0, ignored: 0, doBlocks: 0 },
   };
@@ -501,6 +503,20 @@ function handleCron(st, text, loc) {
   }
 }
 
+const SUBJECT_RE = new RegExp(String.raw`^(?:create\s+(?:or\s+replace\s+)?(?:function|procedure|(?:materialized\s+)?view|table(?:\s+if\s+not\s+exists)?)|alter\s+(?:function|procedure|table|view))\s+` + QNAME, 'i');
+
+/** `-- supareach: ignore <rule> <reason>` applies to the object the next statement creates or alters. */
+export function sqlHatches(st, hatches, stmts, file) {
+  for (const h of hatches) {
+    if (h.error) { st.hatches.invalid.push({ file, line: h.line, error: h.error }); continue; }
+    if (h.directive !== 'ignore') { st.hatches.invalid.push({ file, line: h.line, error: `${h.directive}: not valid in SQL (use ignore)` }); continue; }
+    const next = stmts.find((s) => s.line > h.line);
+    const m = next && SUBJECT_RE.exec(next.outer.replace(/\s+/g, ' ').trim());
+    if (!m) { st.hatches.invalid.push({ file, line: h.line, error: 'ignore: the next statement does not create or alter a function, table or view' }); continue; }
+    st.hatches.suppress.push({ rule: h.rule, subject: normName(m[1]), reason: h.reason, at: `${file}:${h.line}` });
+  }
+}
+
 /** Parse all migrations in a directory in filename order. */
 export function scanMigrations(dir, opts = {}) {
   const st = createState(opts);
@@ -510,9 +526,11 @@ export function scanMigrations(dir, opts = {}) {
     st.stats.files++;
     const rel = path.join(path.basename(dir), f);
     const sql = fs.readFileSync(path.join(dir, f), 'utf8');
-    for (const s of splitStatements(sql)) {
+    const stmts = splitStatements(sql);
+    for (const s of stmts) {
       try { applyStatement(st, s, rel); } catch (e) { st.unparsed.push({ file: rel, line: s.line, reason: 'parser error: ' + e.message, text: short(s.outer) }); }
     }
+    sqlHatches(st, parseHatches(sql), stmts, rel);
   }
   return st;
 }

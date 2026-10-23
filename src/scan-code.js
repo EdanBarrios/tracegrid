@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
+import { parseHatches } from './hatches.js';
 
 const TABLE_OPS = new Set(['select', 'insert', 'update', 'delete', 'upsert']);
 const STORAGE_OPS = new Set(['upload', 'download', 'remove', 'list', 'move', 'copy', 'createSignedUrl', 'createSignedUrls', 'createSignedUploadUrl', 'uploadToSignedUrl', 'getPublicUrl', 'update']);
@@ -126,6 +127,23 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
   /** @type {CallSite[]} */ const calls = [];
   /** @type {Unresolved[]} */ const unresolved = [];
   const lineOf = (n) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  const hatches = parseHatches(text);
+  const namesAt = new Map(hatches.filter((h) => h.directive === 'names' && !h.error).map((h) => [h.line, h.names]));
+
+  /** Names from a `supareach: names` hatch on the call's line, the line above, or above its enclosing function. */
+  function hatchNames(node) {
+    if (!namesAt.size) return null;
+    const lines = [lineOf(node)];
+    for (let p = node.parent; p; p = p.parent) {
+      if (ts.isFunctionLike(p)) {
+        lines.push(lineOf(p));
+        if (p.parent && ts.isVariableDeclaration(p.parent) && p.parent.parent && p.parent.parent.parent) lines.push(lineOf(p.parent.parent.parent));
+        break;
+      }
+    }
+    for (const l of lines) for (const k of [l, l - 1]) if (namesAt.has(k)) return namesAt.get(k);
+    return null;
+  }
 
   /** Local wrappers: name -> { kind, index, extra }. Seeded from config, grown by inference. */
   const local = new Map();
@@ -189,7 +207,8 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
   }
 
   function record(k, node, arg, extra = {}) {
-    const r = arg ? resolveName(arg, consts) : null;
+    let r = arg ? resolveName(arg, consts) : null;
+    if (!r) { const h = hatchNames(node); if (h) r = { names: h, confidence: 'inferred', hatch: true }; }
     if (!r) {
       const w = paramOfEnclosing(arg);
       const u = { kind: k, file, line: lineOf(node), expr: short(arg ? arg.getText(sf) : node.getText(sf)) };
@@ -197,7 +216,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
       unresolved.push(u);
       return;
     }
-    for (const name of r.names) calls.push({ kind: k, name, file, line: lineOf(node), confidence: r.confidence, ...extra });
+    for (const name of r.names) calls.push({ kind: k, name, file, line: lineOf(node), confidence: r.confidence, ...extra, ...(r.hatch ? { via: 'hatch' } : {}) });
   }
 
   function visit(n) {
@@ -219,7 +238,17 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
     ts.forEachChild(n, visit);
   }
   visit(sf);
-  return { calls, unresolved };
+
+  const suppress = [];
+  const invalid = [];
+  for (const h of hatches) {
+    if (h.error) { invalid.push({ file, line: h.line, error: h.error }); continue; }
+    if (h.directive !== 'ignore') continue;
+    const subjects = [...new Set(calls.filter((c) => c.line === h.line || c.line === h.line + 1).map((c) => c.name))];
+    if (!subjects.length) { invalid.push({ file, line: h.line, error: 'ignore: no Supabase call on this or the next line' }); continue; }
+    for (const subject of subjects) suppress.push({ rule: h.rule, subject, reason: h.reason, at: `${file}:${h.line}` });
+  }
+  return { calls, unresolved, hatches: { suppress, invalid, raw: hatches } };
 }
 
 /** Scan a list of files relative to root. */
@@ -227,6 +256,7 @@ export function scanFiles(root, files, wrappers) {
   const calls = [];
   const unresolved = [];
   const failed = [];
+  const hatches = { suppress: [], invalid: [], byFile: new Map() };
   for (const f of files) {
     let text;
     try { text = fs.readFileSync(path.join(root, f), 'utf8'); } catch (e) { failed.push({ file: f, error: String(e.message) }); continue; }
@@ -234,7 +264,10 @@ export function scanFiles(root, files, wrappers) {
       const r = scanSource(text, f, wrappers);
       calls.push(...r.calls);
       unresolved.push(...r.unresolved);
+      hatches.suppress.push(...r.hatches.suppress);
+      hatches.invalid.push(...r.hatches.invalid);
+      if (r.hatches.raw.length) hatches.byFile.set(f, r.hatches.raw);
     } catch (e) { failed.push({ file: f, error: String(e.message) }); }
   }
-  return { calls, unresolved, failed };
+  return { calls, unresolved, failed, hatches };
 }

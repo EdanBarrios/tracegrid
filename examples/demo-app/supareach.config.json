@@ -2,6 +2,6 @@
   "plugins": ["./supareach-rules.mjs"],
   "protectedTables": ["audit_log", "invoices"],
   "ignore": {
-    "edgeFunctions": ["payment-webhook"]
+    "edgeFunctions": [{ "name": "payment-webhook", "reason": "called by the payment provider, not the app" }]
   }
 }

@@ -32,28 +32,59 @@ test('demo app findings', async () => {
   assert.ok(r.edges.some((x) => x.source === 'table:tasks' && x.target === 'fn:is_project_member' && x.kind === 'policy-uses'));
 });
 
-test('CLI writes outputs and --check gates on rising counts', () => {
+const run = (...a) => spawnSync(process.execPath, [bin, ...a], { encoding: 'utf8' });
+
+test('CLI writes outputs; --check gates on fingerprints, not counts', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
   const out = path.join(tmp, 'out');
   const baseline = path.join(tmp, 'baseline.json');
-  execFileSync(process.execPath, [bin, demo, '--out', out, '--baseline', baseline, '--update-baseline'], { stdio: 'pipe' });
+  let r = run(demo, '--out', out, '--baseline', baseline, '--update-baseline');
+  assert.equal(r.status, 0, r.stderr);
   for (const f of ['graph.json', 'report.md', 'graph.html']) assert.ok(fs.existsSync(path.join(out, f)), f);
   const html = fs.readFileSync(path.join(out, 'graph.html'), 'utf8');
   assert.doesNotMatch(html, /<script[^>]+src=/);
   assert.doesNotMatch(html, /<link[^>]+href=/);
-
-  let r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', baseline, '--check']);
-  assert.equal(r.status, 0, r.stderr.toString());
-
   const b = JSON.parse(fs.readFileSync(baseline, 'utf8'));
-  b.counts['missing-rpc'] = 0;
-  b.ids['missing-rpc'] = [];
-  fs.writeFileSync(baseline, JSON.stringify(b));
-  r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', baseline, '--check']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr.toString(), /FAIL missing-rpc: 0 -> 1[\s\S]*delete_everything/);
+  assert.ok(b.findings.includes('missing-rpc:delete_everything'));
 
-  r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', path.join(tmp, 'none.json'), '--check']);
+  r = run(demo, '--no-output', '--baseline', baseline, '--check');
+  assert.equal(r.status, 0, r.stderr);
+
+  // Count-neutral swap: the baseline has a finding that is gone and lacks one that is present.
+  const swapped = b.findings.filter((x) => x !== 'missing-rpc:delete_everything').concat('missing-rpc:something_fixed');
+  fs.writeFileSync(baseline, JSON.stringify({ ...b, findings: swapped }));
+  r = run(demo, '--no-output', '--baseline', baseline, '--check');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /NEW error missing-rpc:delete_everything/);
+  assert.match(r.stdout, /no longer present[\s\S]*missing-rpc:something_fixed/);
+
+  // --update-baseline only shrinks unless --force.
+  r = run(demo, '--no-output', '--baseline', baseline, '--update-baseline');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /refused[\s\S]*missing-rpc:delete_everything/);
+  r = run(demo, '--no-output', '--baseline', baseline, '--update-baseline', '--force');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(baseline, 'utf8')).findings, b.findings);
+
+  r = run(demo, '--no-output', '--baseline', path.join(tmp, 'none.json'), '--check');
   assert.equal(r.status, 2);
+  fs.writeFileSync(path.join(tmp, 'old.json'), JSON.stringify({ counts: {} }));
+  r = run(demo, '--no-output', '--baseline', path.join(tmp, 'old.json'), '--check');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /expected \{ "findings"/);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('ignores without a reason are a config error (exit 2)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  const cfg = path.join(tmp, 'c.json');
+  fs.writeFileSync(cfg, JSON.stringify({ ignore: { functions: ['internal_cleanup'] } }));
+  let r = run(demo, '--no-output', '--config', cfg);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /bare string/);
+  fs.writeFileSync(cfg, JSON.stringify({ ignore: { functions: [{ name: 'internal_cleanup', reason: ' ' }] } }));
+  r = run(demo, '--no-output', '--config', cfg);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /non-empty "reason"/);
   fs.rmSync(tmp, { recursive: true, force: true });
 });

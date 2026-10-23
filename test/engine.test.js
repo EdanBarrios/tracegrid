@@ -48,3 +48,34 @@ test('a plugin without a rules export is a clear error', async () => {
   await assert.rejects(loadPlugins(tmp, ['p.mjs']), /must export `rules`/);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
+
+test('hatches: names resolve, ignore needs a reason and suppresses, SQL ignore targets the next object', async () => {
+  const { parseHatches } = await import('../src/hatches.js');
+  const { scanSource } = await import('../src/scan-code.js');
+  const { createState, splitStatements, applyStatement, sqlHatches } = await import('../src/scan-sql.js');
+  assert.equal(parseHatches('// supareach: ignore missing-rpc')[0].error.startsWith('ignore: needs'), true);
+  assert.equal(parseHatches('// supareach: entry-point')[0].error.startsWith('entry-point: needs'), true);
+  assert.match(parseHatches('// supareach: frobnicate x')[0].error, /unknown directive/);
+
+  const r = scanSource(`
+    // supareach: names tasks, projects
+    export function count(tableName: string) { return supabase.from(tableName).select('*'); }
+    const t = (n: string) =>
+      supabase.from(n).select(); // not covered: stays unresolved
+    supabase.rpc('gone'); // supareach: ignore missing-rpc removed next release
+    // supareach: ignore missing-rpc
+    supabase.rpc('also_gone');
+  `, 'a.ts');
+  assert.deepEqual(r.calls.filter((c) => c.kind === 'table').map((c) => [c.name, c.via]), [['tasks', 'hatch'], ['projects', 'hatch']]);
+  assert.equal(r.unresolved.length, 1);
+  assert.deepEqual(r.hatches.suppress.map((h) => [h.rule, h.subject, h.reason]), [['missing-rpc', 'gone', 'removed next release']]);
+  assert.equal(r.hatches.invalid.length, 1);
+
+  const st = createState();
+  const sql = `-- supareach: ignore exposed-uncalled-function called by the partner API\ncreate function public.f() returns int language sql as $$ select 1 $$;\n-- supareach: ignore exposed-uncalled-function no target\nselect 1;`;
+  const ss = splitStatements(sql);
+  for (const s of ss) applyStatement(st, s, 'm.sql');
+  sqlHatches(st, parseHatches(sql), ss, 'm.sql');
+  assert.deepEqual(st.hatches.suppress.map((h) => [h.subject, h.at]), [['f', 'm.sql:1']]);
+  assert.equal(st.hatches.invalid.length, 1);
+});

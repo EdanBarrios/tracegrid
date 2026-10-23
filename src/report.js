@@ -53,6 +53,11 @@ export function renderReport(r) {
     for (const u of r.info.unparsed_sql) L.push(`| \`${u.file}:${u.line}\` | ${esc(u.reason)} | \`${esc(u.text)}\` |`);
   }
   L.push('');
+  if (r.info.invalid_hatches.length) {
+    L.push(`## Hatches that were not applied (${r.info.invalid_hatches.length})`, '');
+    for (const h of r.info.invalid_hatches) L.push(`- \`${h.file}:${h.line}\`: ${esc(h.error)}`);
+    L.push('');
+  }
   if (r.info.unreadable_files.length) {
     L.push('## Files that failed to parse', '');
     for (const f of r.info.unreadable_files) L.push(`- \`${f.file}\`: ${f.error}`);
