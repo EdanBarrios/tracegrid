@@ -219,32 +219,53 @@ svg .mlabel{font-size:var(--fs-label);paint-order:stroke;stroke:var(--bg);stroke
 #dash{position:absolute;inset:0;overflow:auto;display:none}
 .dg{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));border-bottom:var(--hair) solid var(--line)}
 .pn{grid-column:span 6;border-right:var(--hair) solid var(--line);border-top:var(--hair) solid var(--line);padding:10px 12px 12px;min-width:0;background:color-mix(in srgb,var(--bg) 82%,transparent)}
-.pn.w12{grid-column:span 12}.pn.w7{grid-column:span 7}.pn.w5{grid-column:span 5}.pn.w4{grid-column:span 4}.pn.w8{grid-column:span 8}
-.pn h2{margin:0 0 8px;font-size:var(--fs-label);letter-spacing:var(--track);text-transform:uppercase;color:var(--muted);font-weight:400;display:flex;justify-content:space-between;gap:8px}
-.strip{display:flex;flex-wrap:wrap;border-top:var(--hair) solid var(--line)}
-.strip .cell{padding:10px 14px;border-right:var(--hair) solid var(--line);min-width:120px}
-.strip .cell.score{flex:1;min-width:280px;display:flex;gap:14px;align-items:flex-start}
-.strip .v{font-size:var(--fs-big);font-weight:700;line-height:1.05;font-variant-numeric:tabular-nums}
-.strip .fix .v{color:var(--fix)}.strip .review .v{color:var(--review)}.strip .info .v{color:var(--info)}
-.strip .expl{font-size:var(--fs-small);color:var(--muted);max-width:460px;margin-top:2px}
-.strip .bl{font-size:var(--fs-small)}.strip .bl b{font-size:18px}
-table.mx{border-collapse:collapse;width:100%;font-size:var(--fs-small)}
-table.mx th{font-weight:400;font-size:var(--fs-label);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:4px 6px;border-bottom:var(--hair) solid var(--line2);vertical-align:bottom}
-table.mx td{border-bottom:var(--hair) solid var(--line);border-right:var(--hair) solid var(--line);padding:0}
-table.mx td.rh{padding:5px 6px;color:var(--fg);white-space:nowrap;border-right:var(--hair) solid var(--line2)}
-table.mx td button{display:block;width:100%;text-align:left;border:0;padding:5px 6px}
-table.mx td button:hover,table.mx td button.on{background:var(--panel2);outline:var(--hair) solid var(--fg);outline-offset:-1px}
-table.mx b{font-size:15px;font-variant-numeric:tabular-nums}table.mx .u{color:var(--muted);margin-left:6px}table.mx .u.hot{color:var(--review)}
-table.mx .na{color:var(--line2);padding:5px 6px;display:block}
-.hole{display:block;width:100%;text-align:left;border:0;border-bottom:var(--hair) solid var(--line);padding:6px 2px}
-.hole:hover{background:var(--panel2)}.hole .r{font-size:var(--fs-label);color:var(--muted)}.hole svg{display:block;margin-top:3px;max-width:100%;height:auto}
-.bars{display:grid;grid-template-columns:minmax(0,max-content) 1fr auto;gap:3px 10px;align-items:center;font-size:var(--fs-small)}
-.bars .k{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;text-align:left;border:0;padding:0}
-.bars .k:hover{text-decoration:underline}.bars .t{display:flex;height:9px;border:var(--hair) solid var(--line)}.bars .t span{display:block;height:100%}
-.bars .n{font-variant-numeric:tabular-nums;color:var(--muted);text-align:right}
-.kv{display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:var(--fs-small)}.kv .n{text-align:right;font-variant-numeric:tabular-nums}.kv .n.warn{color:var(--review)}
-.tlist{width:100%;border-collapse:collapse;font-size:var(--fs-small)}.tlist td{padding:3px 6px 3px 0;border-bottom:var(--hair) solid var(--line);vertical-align:top}
+.pn.w12{grid-column:span 12}
 .note{font-size:var(--fs-small);color:var(--muted);margin:0 0 8px;max-width:760px}
+.card>h2,.pn>h2{margin:0;font-size:var(--fs-label);font-weight:400;letter-spacing:var(--track);text-transform:uppercase;color:var(--muted);padding:9px 14px;border-bottom:var(--hair) solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card{border:var(--hair) solid var(--line);background:var(--panel);min-width:0}
+.q{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:var(--hair) solid var(--line2);color:var(--muted);font-size:var(--fs-small);letter-spacing:0;position:relative;cursor:help;margin-left:8px;text-transform:none;font-weight:400}
+.q:hover,.q:focus{color:var(--accent);border-color:var(--accent);outline:none}
+.q::after{content:attr(data-tip);position:absolute;top:24px;left:-8px;width:290px;background:var(--bg);border:var(--hair) solid var(--accent);color:var(--fg);padding:8px 10px;font-size:var(--fs);line-height:1.4;letter-spacing:0;text-transform:none;display:none;z-index:9;text-align:left}
+.q:hover::after,.q:focus::after{display:block}.q.r::after{left:auto;right:-8px}
+.strip{display:flex;flex-wrap:wrap;border-bottom:var(--hair) solid var(--line);background:var(--panel)}
+.strip>div{padding:10px 20px;border-right:var(--hair) solid var(--line);display:flex;gap:12px;align-items:baseline}
+.strip .big{font-size:var(--fs-big);color:var(--fg);font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.strip .fix{color:var(--fix);font-weight:var(--fix-w)}.strip .review{color:var(--review)}.strip .info{color:var(--info)}
+.strip .bl b{font-size:16px}
+.cols{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:14px;padding:14px 18px;align-items:start}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.todo{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center;padding:14px 16px;border-top:var(--hair) solid var(--line);border-left:3px solid var(--fix)}
+.todo .g{color:var(--fix);font-size:22px}.todo .tt{font-size:15px;font-weight:var(--fix-w)}.todo .mut{color:var(--muted);word-break:break-all}.todo .ob{color:var(--fg);font-weight:700}
+.todo button{border-color:var(--fix);color:var(--fix)}.todo button:hover{background:var(--fix);color:var(--bg)}
+.none{padding:14px 16px;color:var(--muted);border-top:var(--hair) solid var(--line)}
+details{border:var(--hair) solid var(--line);background:var(--panel)}
+details>summary{list-style:none;cursor:pointer;padding:9px 14px;display:flex;align-items:center;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;font-size:var(--fs-label)}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"+";width:16px;color:var(--accent)}details[open]>summary::before{content:"\2212"}
+details>summary>span:first-of-type{flex:1}details>summary em{font-style:normal;letter-spacing:0;text-transform:none}
+details>summary:hover,details>summary:focus-visible{color:var(--fg)}
+details .body{padding:10px 14px 14px;border-top:var(--hair) solid var(--line);overflow-x:auto}
+.gr{display:flex;flex-direction:column;gap:6px}
+table.t{width:100%;border-collapse:collapse;font-size:var(--fs-small)}table.t td{padding:6px 8px;border-top:var(--hair) solid var(--line);vertical-align:top}table.t tr:first-child td{border-top:0}
+table.t td:last-child{color:var(--muted);text-align:right;word-break:break-all}
+table.t td.gl{white-space:nowrap}.gl.fix{color:var(--fix)}.gl.review{color:var(--review)}.gl.info{color:var(--info)}
+table.t button.ghost{padding:0 2px;font-weight:700;text-align:left}
+table.mx{border-collapse:collapse;width:100%}
+table.mx th{font-weight:400;font-size:var(--fs-label);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:center;padding:8px 6px;border:var(--hair) solid var(--line)}
+table.mx th.rh{text-align:left;padding-left:14px;color:var(--fg);letter-spacing:0;text-transform:none}
+table.mx td{border:var(--hair) solid var(--line);text-align:center;padding:0;height:52px}
+table.mx td button{display:flex;align-items:baseline;justify-content:center;gap:1px;width:100%;height:100%;border:0;padding:0 4px}
+table.mx td b{font-size:20px;font-variant-numeric:tabular-nums}table.mx td small{font-size:var(--fs);color:var(--muted)}
+table.mx td.hot{background:color-mix(in srgb,var(--fix) 14%,transparent)}table.mx td.hot b{color:var(--fix);text-decoration:underline}
+table.mx td button:hover,table.mx td button.on{outline:var(--hair) solid var(--fg);outline-offset:-1px}
+table.mx .na{color:var(--line2);display:block}
+.legend{padding:8px 14px;color:var(--muted);border-top:var(--hair) solid var(--line)}.legend b{color:var(--fg)}
+.cov{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}.cov div{padding:10px 14px;border-right:var(--hair) solid var(--line)}.cov div:last-child{border-right:0}
+.cov b{display:block;font-size:24px;font-variant-numeric:tabular-nums}.cov .warn b{color:var(--fix)}.cov .warn .lbl::after{content:" \25b2"}
+.bar{display:grid;grid-template-columns:minmax(120px,290px) minmax(0,1fr) 34px;gap:12px;align-items:center;padding:3px 0}
+.bar .k{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;border:0;padding:0}.bar .k:hover:not(:disabled){text-decoration:underline}.bar .k:disabled{cursor:default;opacity:1}
+.bar .t{display:flex;height:6px;background:var(--line)}.bar .t span{display:block;height:100%}.bar .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.mono-s{color:var(--fg);text-align:left!important}
 /* 3D */
 #three{position:absolute;inset:0;background:var(--3d-bg)}#three-canvas{position:absolute;inset:0}
 #three-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
@@ -254,7 +275,7 @@ table.mx .na{color:var(--line2);padding:5px 6px;display:block}
 #three-msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:12px 16px;z-index:3;max-width:80%;text-align:center}
 .scene-tooltip .tip{font:var(--fs-small) var(--font);color:var(--3d-label);background:var(--3d-bg);border:var(--hair) solid var(--line2);padding:3px 8px}
 .scene-tooltip .tip span{color:var(--muted);margin-left:6px}
-@media (max-width:1100px){.pn,.pn.w7,.pn.w5,.pn.w4,.pn.w8{grid-column:span 12}}
+@media (max-width:1100px){.pn{grid-column:span 12}.cols{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:760px){#app{flex-direction:column}#side{width:100%;max-width:none;height:46%;border-right:0;border-bottom:var(--hair) solid var(--line)}#main{min-height:0}}
 `;
 
@@ -565,76 +586,91 @@ function reach(){var live=D.nodes.filter(function(n){return !n.missing});
   return M}
 function exposure(M){var t=D.tiers||{fix:0,review:0,info:0};var u=new Set();['tables','views','rpc'].forEach(function(k){var c=M.anon[k];if(c&&c.uncalled)c.uncalled.forEach(function(id){u.add(id)})});
   return{score:10*(t.fix||0)+3*(t.review||0)+u.size,anonUncalled:u.size}}
-function panel(title,cls,right){var p=h('div',{cls:'pn '+(cls||'')});var hh=h('h2',null,h('span',{text:title}));if(right)hh.appendChild(h('span',{text:right}));p.appendChild(hh);return p}
-function miniPath(f){var n=byId.get(f.node);var items=[];if(!n)return null;
-  var cc=callers(n.id).length;items.push(cc?{t:'file',label:cc+' caller'+(cc>1?'s':''),edge:'solid'}:{t:'nocaller',label:'no caller',edge:'dashed'});
-  if(exposedOf(n)&&!n.missing)items.push({t:'api',label:(n.type==='function'?'/rpc/':'/')+short(bare(n.label),22)});
-  items.push({t:n.type,label:short(n.label,28),tier:f.tier});
-  var roles=[];if(n.type==='function'){if(n.anon)roles.push('anon');if(n.authenticated)roles.push('authenticated')}
-  else if(n.privsByRole){['anon','authenticated'].forEach(function(r){if((n.privsByRole[r]||[]).length)roles.push(r)})}
-  else if(n.type==='edge_function'&&n.verifyJwt===false)roles.push('public');
-  if(!roles.length&&f.roles)roles=f.roles.slice();
-  var fs=cssNum('--fs-small',11),x=6,H=24,y=12;var sv=s('svg',{height:H});
-  items.forEach(function(it,i){if(i){var x2=x+26;sv.appendChild(s('path',{d:'M'+x+','+y+' L'+x2+','+y,'class':'e'+(items[0].edge==='dashed'&&i===1?' inf':'')+(i===items.length-1?' hi':''),'marker-end':'url(#'+(i===items.length-1?'ar-hi':'ar')+')'}));x=x2+10}
-    var g=sym(it.t,4.5,it.tier||(it.t==='nocaller'?'ghost':''));g.setAttribute('transform','translate('+x+','+y+')');sv.appendChild(g);
-    sv.appendChild(s('text',{x:x+9,y:y+4,text:it.label}));x+=9+textW(it.label,fs)+8});
-  if(roles.length){x+=6;sv.appendChild(s('line',{x1:x,y1:3,x2:x,y2:H-3,stroke:'var(--line2)'}));x+=8;var lt='callable by';sv.appendChild(s('text',{x:x,y:y+4,'class':'colh',text:lt}));x+=lt.length*cssNum('--fs-label',10)*(0.6+cssNum('--track',0.16))+10;
-    roles.forEach(function(r){var g=sym('role',3.5,'');g.setAttribute('transform','translate('+x+','+y+')');sv.appendChild(g);sv.appendChild(s('text',{x:x+8,y:y+4,text:r}));x+=8+textW(r,fs)+12})}
-  sv.setAttribute('width',Math.ceil(x));sv.setAttribute('viewBox','0 0 '+Math.ceil(x)+' '+H);return sv}
-function bars(rows,max,onClick){var g=h('div',{cls:'bars'});rows.forEach(function(r){var k=h('button',{cls:'k',type:'button',title:r.key,text:r.label||r.key});if(onClick)k.addEventListener('click',function(){onClick(r)});else k.disabled=true;g.appendChild(k);
-    var t=h('div',{cls:'t'});r.parts.forEach(function(p){if(p[1])t.appendChild(h('span',{style:'width:'+(100*p[1]/Math.max(1,max)).toFixed(2)+'%;background:var('+p[0]+')'}))});g.appendChild(t);g.appendChild(h('span',{cls:'n',text:String(r.total)}))});return g}
+/* Plain-English titles, built from the rule and what the finding says about its object. */
+function who(roles){roles=roles||[];var a=roles.indexOf('anon')>=0,u=roles.indexOf('authenticated')>=0;return a&&u?'anon and signed-in users':a?'anon users':u?'signed-in users':'client roles'}
+var hasWrite=function(n){return !n||!Array.isArray(n.clientPrivs)||n.clientPrivs.some(function(p){return WRITE.test(p)})};
+var TITLES={
+'exposed-uncalled-function':function(f){return 'Function nothing calls, open to '+who(f.roles)+(f.securityDefiner?' (security definer)':'')},
+'granted-helper-function':function(f){return 'Helper function only SQL uses, still callable by '+who(f.roles)},
+'client-table-without-rls':function(f,n){return 'Table '+(hasWrite(n)?'readable and writable':'readable')+' with row security off'},
+'client-table-not-granted':function(){return 'Table the browser code uses, but no client role may touch it'},
+'client-view-without-security-invoker':function(){return 'View that skips row security (runs with its owner’s rights)'},
+'client-table-without-policies':function(){return 'Table with row security on but no policy'},
+'auth-hook-function-exposed':function(f){return 'Auth hook function callable by '+who(f.roles)},
+'missing-rpc':function(){return 'Code calls a function the schema does not define'},
+'unknown-table':function(){return 'Code uses a table or view the schema does not define'},
+'uncalled-edge-function':function(){return 'Edge function nothing calls'},
+'missing-edge-function':function(){return 'Code invokes an edge function that does not exist'},
+'edge-service-role-before-auth':function(){return 'Edge function uses the service key before checking who is calling'},
+'edge-request-controlled-fetch':function(){return 'Edge function fetches a URL taken from the request'},
+'demo/client-writes-protected-table':function(){return 'Browser code writes a table only the server should write'}};
+function plainTitle(f){var fn=Object.prototype.hasOwnProperty.call(TITLES,f.rule)?TITLES[f.rule]:null;if(fn)return fn(f,f.node&&byId.get(f.node));var r=rules.get(f.rule);return (r&&r.title)||f.rule}
+var inFilter=function(f){return !state.filter||(f.node&&state.filter.ids.has(f.node))};
+function tip(text,right){return h('span',{cls:'q'+(right?' r':''),tabindex:'0',role:'img','aria-label':text,'data-tip':text,text:'?'})}
+function det(title,count,tipText,body){var d=h('details');var sm=h('summary',null,h('span',{text:title}));if(count!=null)sm.appendChild(h('em',{text:String(count)}));
+  if(tipText){var q=tip(tipText,true);q.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation()});sm.appendChild(q)}
+  d.appendChild(sm);d.appendChild(h('div',{cls:'body'},body));return d}
+function objBtn(f){var b=h('button',{type:'button',cls:'ghost',text:f.id,title:'Show path'});b.addEventListener('click',function(){selectFinding(f)});return b}
+function findingTable(list){var t=h('table',{cls:'t'});list.forEach(function(f){t.appendChild(h('tr',null,h('td',{cls:'gl '+f.tier,text:GLY[f.tier]}),h('td',{text:plainTitle(f)}),h('td',{cls:'mono-s'},objBtn(f)),h('td',{text:f.at||''})))});return t}
+function todoRow(f){var row=h('div',{cls:'todo'},h('span',{cls:'g',text:GLY.fix}),
+    h('div',null,h('div',{cls:'tt',text:plainTitle(f)}),h('div',{cls:'mut'},h('b',{cls:'ob',text:f.id}),document.createTextNode(f.at?' · '+f.at:''))));
+  var b=h('button',{type:'button',text:'show path'});b.addEventListener('click',function(){selectFinding(f)});row.appendChild(b);return row}
+function barRows(rows,max,onClick){var g=h('div');rows.forEach(function(r){var k=h('button',{cls:'k ghost',type:'button',title:r.key,text:r.label||r.key});if(onClick)k.addEventListener('click',function(){onClick(r)});else k.disabled=true;
+    var t=h('div',{cls:'t'});r.parts.forEach(function(p){if(p[1])t.appendChild(h('span',{style:'width:'+(100*p[1]/Math.max(1,max)).toFixed(2)+'%;background:var('+p[0]+')'}))});
+    g.appendChild(h('div',{cls:'bar'},k,t,h('span',{cls:'n',text:String(r.total)})))});return g}
 function drawDash(){svg.style.display='none';var o=$('dash');o.style.display='block';o.textContent='';card.hidden=true;
-  $('crumb').textContent='';$('crumb').appendChild(h('span',{cls:'lbl',text:'Dashboard \u00b7 '}));$('crumb').appendChild(document.createTextNode(D.root+(D.generated_at?' \u00b7 '+String(D.generated_at).slice(0,16).replace('T',' '):'')));
+  $('crumb').textContent='';$('crumb').appendChild(h('span',{cls:'lbl',text:'Dashboard · '}));$('crumb').appendChild(document.createTextNode(D.root+(D.generated_at?' · '+String(D.generated_at).slice(0,16).replace('T',' '):'')));
   if(!D.nodes.length){emptyPath();return}
   var M=reach();var ex=exposure(M);var t=D.tiers||{fix:0,review:0,info:0};
-  /* top strip */
+  /* header strip */
   var st=h('div',{cls:'strip'});
-  st.appendChild(h('div',{cls:'cell score'},h('div',null,h('div',{cls:'lbl',text:'Exposure'}),h('div',{cls:'v',text:String(ex.score)})),
-    h('div',{cls:'expl'},document.createTextNode('10 \u00d7 Fix + 3 \u00d7 Review + 1 per object anon can reach that no code calls ('+ex.anonUncalled+'). Lower is better; 0 means nothing to act on.'))));
-  [['fix','Fix'],['review','Review'],['info','Info']].forEach(function(x){var c=h('div',{cls:'cell '+x[0]},h('div',{cls:'lbl',text:x[1]}),h('div',{cls:'v',text:String(t[x[0]]||0)}));st.appendChild(c)});
-  if(D.baseline){st.appendChild(h('div',{cls:'cell bl'},h('div',{cls:'lbl',text:'Since baseline'}),h('div',null,h('b',{text:'+'+D.baseline.fresh}),document.createTextNode(' new  '),h('b',{text:'\u2212'+D.baseline.fixed}),document.createTextNode(' fixed')),h('div',{cls:'muted',text:D.baseline.file})))}
-  else st.appendChild(h('div',{cls:'cell bl'},h('div',{cls:'lbl',text:'Since baseline'}),h('div',{cls:'muted',text:'no baseline'}),h('div',{cls:'muted',text:'tracegrid --update-baseline'})));
+  st.appendChild(h('div',null,h('span',{cls:'lbl',text:'Exposure'}),h('span',{cls:'big',text:String(ex.score)}),tip('10 × Fix + 3 × Review + 1 per object anon can reach that no code calls ('+ex.anonUncalled+'). Lower is better; 0 means nothing to act on.')));
+  [['fix','fix'],['review','review'],['info','info']].forEach(function(x){st.appendChild(h('div',null,h('span',{cls:x[0],text:GLY[x[0]]+' '+(t[x[0]]||0)+' '+x[1]})))});
+  if(D.baseline)st.appendChild(h('div',{cls:'bl'},h('span',{cls:'lbl',text:'Since baseline'}),h('span',null,h('b',{text:'+'+D.baseline.fresh}),document.createTextNode(' new')),h('span',null,h('b',{text:'−'+D.baseline.fixed}),document.createTextNode(' fixed')),tip('Compared with '+D.baseline.file+'. New findings are not in the baseline; fixed ones were in it and are gone.')));
   o.appendChild(st);
-  var g=h('div',{cls:'dg'});o.appendChild(g);
-  /* reach matrix */
-  var pm=panel('Reach matrix','w7','reachable \u00b7 uncalled');var tb=h('table',{cls:'mx'});var hr=h('tr',null,h('th',{text:'role \\ surface'}));SURF.forEach(function(su){hr.appendChild(h('th',{text:su[1]}))});tb.appendChild(hr);
-  ROLES.forEach(function(ro){var tr=h('tr',null,h('td',{cls:'rh',text:ro[1]}));SURF.forEach(function(su){var c=M[ro[0]][su[0]];var td=h('td');
-      if(c.na){var sp=h('span',{cls:'na',text:'\u2014'});if(c.note)sp.setAttribute('title',c.note);td.appendChild(sp)}
-      else{var lbl=ro[1]+' \u00d7 '+su[1];var b=h('button',{type:'button',cls:state.filter&&state.filter.label===lbl?'on':''},h('b',{text:String(c.ids.length)}));
-        if(c.uncalled)b.appendChild(h('span',{cls:'u'+(c.uncalled.length&&ro[0]==='anon'?' hot':''),text:c.uncalled.length+' uncalled'}));
-        b.setAttribute('title',(c.note?c.note+'. ':'')+'Click to filter the findings list to these objects; click again to clear.');
+  var cols=h('div',{cls:'cols'});o.appendChild(cols);var L=h('div',{cls:'col'}),R=h('div',{cls:'col'});cols.appendChild(L);cols.appendChild(R);
+  /* left: to do, then review */
+  var allFix=D.findings.filter(function(f){return f.tier==='fix'}),fixes=allFix.filter(inFilter);
+  var todo=h('div',{cls:'card'},h('h2',null,h('span',null,document.createTextNode('To do · fix'),tip('Each item is a hole an outsider could use. Show path opens the code-to-database route for that finding.')),h('span',{text:(fixes.length!==allFix.length?fixes.length+' of ':'')+allFix.length+' item'+(allFix.length===1?'':'s')})));
+  if(!fixes.length)todo.appendChild(h('div',{cls:'none',text:allFix.length?'No fix items in the selected cell.':'Nothing to fix.'}));
+  fixes.slice(0,200).forEach(function(f){todo.appendChild(todoRow(f))});
+  if(fixes.length>200)todo.appendChild(h('div',{cls:'none',text:(fixes.length-200)+' more: use the list on the left.'}));
+  L.appendChild(todo);
+  var rv=D.findings.filter(function(f){return f.tier==='review'&&inFilter(f)});
+  L.appendChild(det('Review ('+rv.length+')','not urgent',null,rv.length?findingTable(rv.slice(0,200)):h('span',{cls:'muted',text:'Nothing to review.'})));
+  /* right: reach matrix */
+  var mx=h('div',{cls:'card'},h('h2',null,h('span',null,document.createTextNode('Reach matrix'),tip('Each cell is the number of objects nothing calls, then the number the role can reach. Highlighted cells have something nothing calls. Click a cell to filter the findings to its objects; click again to clear. A dash means not applicable.')),h('span',{text:'role × surface'})));
+  var tb=h('table',{cls:'mx'});var hr=h('tr',null,h('th',{cls:'rh'}));SURF.forEach(function(su){hr.appendChild(h('th',{text:su[1]}))});tb.appendChild(hr);
+  ROLES.forEach(function(ro){var tr=h('tr',null,h('th',{cls:'rh',text:ro[1]}));SURF.forEach(function(su){var c=M[ro[0]][su[0]];var td=h('td');
+      if(c.na){var sp=h('span',{cls:'na',text:'—'});if(c.note)sp.setAttribute('title',c.note);td.appendChild(sp)}
+      else{var lbl=ro[1]+' × '+su[1];var nu=c.uncalled?c.uncalled.length:0;
+        var b=h('button',{type:'button',cls:state.filter&&state.filter.label===lbl?'on':'','aria-pressed':state.filter&&state.filter.label===lbl?'true':'false'});
+        if(c.uncalled){b.appendChild(h('b',{text:String(nu)}));b.appendChild(h('small',{text:'/'+c.ids.length}));if(nu)td.className='hot'}else b.appendChild(h('b',{text:String(c.ids.length)}));
+        b.setAttribute('title',lbl+': '+(c.uncalled?nu+' not called of '+c.ids.length+' reachable':c.ids.length+' reachable')+(c.note?'. '+c.note:''));
         b.addEventListener('click',function(){if(state.filter&&state.filter.label===lbl)setFilter(null);else setFilter({label:lbl,ids:new Set(c.ids)})});td.appendChild(b)}
       tr.appendChild(td)});tb.appendChild(tr)});
-  pm.appendChild(tb);pm.appendChild(h('p',{cls:'note',style:'margin:8px 0 0',text:'Reachable: the role holds a privilege (tables, views), EXECUTE (functions) or can call it (edge functions). Uncalled: nothing in the scanned code calls it.'}));g.appendChild(pm);
-  /* biggest holes */
-  var fixes=D.findings.filter(function(f){return f.tier==='fix'});var ph=panel('Biggest holes','w5','top '+Math.min(5,fixes.length)+' of '+fixes.length+' fix');
-  if(!fixes.length)ph.appendChild(h('p',{cls:'note',text:'No Fix findings.'}));
-  fixes.slice(0,5).forEach(function(f){var b=h('button',{cls:'hole',type:'button'},h('div',{cls:'r',text:f.rule}));var mp=miniPath(f);if(mp)b.appendChild(mp);else b.appendChild(h('div',{text:f.id}));b.setAttribute('title',f.id+' \u2014 open the path view');
-    b.addEventListener('click',function(){selectFinding(f)});ph.appendChild(b)});
-  g.appendChild(ph);
-  /* rules */
-  var pr=panel('Findings by rule','w6');var rows=D.rules.map(function(r){var mine=D.findings.filter(function(f){return f.rule===r.id});return{key:r.id,total:mine.length,parts:[['--fix',mine.filter(function(f){return f.tier==='fix'}).length],['--review',mine.filter(function(f){return f.tier==='review'}).length],['--info',mine.filter(function(f){return f.tier==='info'}).length]]}}).filter(function(r){return r.total}).sort(function(a,b){return b.total-a.total});
-  if(!rows.length)pr.appendChild(h('p',{cls:'note',text:'No findings.'}));
-  else pr.appendChild(bars(rows,rows[0].total,function(r){$('q').value=r.key;state.q=r.key.toLowerCase();renderList()}));g.appendChild(pr);
-  /* folders */
-  var pf=panel('Top folders by database touchpoints','w6');var fm=new Map();
+  mx.appendChild(tb);mx.appendChild(h('div',{cls:'legend'},document.createTextNode('cell = '),h('b',{text:'not called'}),document.createTextNode(' / reachable  ·  — n/a')));R.appendChild(mx);
+  /* coverage: four stat cells */
+  var cv=D.coverage||{};var unp=(cv.sql_unparsed||0)+(cv.partial||0)+(cv.unreadable||0);
+  var cvp=h('div',{cls:'card'},h('h2',null,h('span',null,document.createTextNode('Coverage'),tip('How much of the project the scan understood. Unresolved calls use dynamic names it cannot read. Unparsed counts SQL statements not understood plus partly parsed and unreadable files. Anything above 0 means the findings may miss something.')),h('span',{text:D.source==='catalog'?'live catalog':'migrations'})));
+  var stat=function(k,v,warn){return h('div',{cls:warn?'warn':''},h('span',{cls:'lbl',text:k}),h('b',{text:v==null?'—':String(v)}))};
+  cvp.appendChild(h('div',{cls:'cov'},stat('Files',cv.files,!cv.files),stat('Calls',cv.call_sites,!cv.call_sites),stat('Unresolved',cv.unresolved,cv.unresolved>0),stat('Unparsed',unp,unp>0)));R.appendChild(cvp);
+  /* right: collapsed sections */
+  var gr=h('div',{cls:'gr'});R.appendChild(gr);
+  var rows=D.rules.map(function(r){var mine=D.findings.filter(function(f){return f.rule===r.id&&inFilter(f)});var tc=function(x){return mine.filter(function(f){return f.tier===x}).length};var w=tc('fix')?'fix':tc('review')?'review':'info';return{key:r.id,label:GLY[w]+' '+r.id,total:mine.length,parts:[['--fix',tc('fix')],['--review',tc('review')],['--info',tc('info')]]}}).filter(function(r){return r.total}).sort(function(a,b){return b.total-a.total});
+  gr.appendChild(det('Findings by rule',rows.reduce(function(a,r){return a+r.total},0),'Click a rule to search the list on the left for it.',rows.length?barRows(rows,rows[0].total,function(r){$('q').value=r.key;state.q=r.key.toLowerCase();renderList()}):h('span',{cls:'muted',text:'No findings.'})));
+  var fm=new Map();
   D.links.forEach(function(e){var sN=byId.get(e.source);if(!sN||!/^(rpc|from|invoke|storage)/.test(e.relation))return;var k=sN.type==='file'?folderOf(sN.label)+'/':sN.type==='edge_function'?'functions/'+sN.label:null;if(!k)return;fm.set(k,(fm.get(k)||0)+(e.count||1))});
   var frows=[...fm].sort(function(a,b){return b[1]-a[1]}).slice(0,8).map(function(x){return{key:x[0],total:x[1],parts:[['--bar',x[1]]]}});
-  if(!frows.length)pf.appendChild(h('p',{cls:'note',text:'No call sites.'}));else pf.appendChild(bars(frows,frows[0].total,null));g.appendChild(pf);
-  /* Supabase 2026-10-30 */
+  gr.appendChild(det('Top folders',frows.length,'Folders ranked by how many database calls their code makes.',frows.length?barRows(frows,frows[0].total,null):h('span',{cls:'muted',text:'No call sites.'})));
   var dg=D.nodes.filter(function(n){return(n.type==='table'||n.type==='view')&&n.defaultGrants&&n.defaultGrants.length&&(inc.get(n.id)||[]).some(function(e){return /^(from|from-weak)$/.test(e.relation)})});
-  if(dg.length){var pc=panel('Supabase 2026-10-30 change','w12',dg.length+' table'+(dg.length>1?'s':''));
-    pc.appendChild(h('p',{cls:'note',text:'The client uses these, and anon / authenticated hold the privileges below only through Supabase\u2019s legacy default grants. Existing tables keep them; a table dropped and recreated after 2026-10-30, or a project rebuilt from these migrations, loses them until a migration GRANTs them explicitly.'}));
-    var tl=h('table',{cls:'tlist'});dg.slice(0,40).forEach(function(n){var site=(inc.get(n.id)||[]).filter(function(e){return /^(from|from-weak)$/.test(e.relation)})[0];var nm=h('button',{type:'button',cls:'ghost',text:n.label});nm.addEventListener('click',function(){selectNode(n.id)});
-      tl.appendChild(h('tr',null,h('td',null,nm),h('td',{text:n.defaultGrants.join(', ').toUpperCase()}),h('td',{cls:'muted',text:site&&site.at&&site.at[0]?site.at[0]:''})))});
-    pc.appendChild(tl);if(dg.length>40)pc.appendChild(h('p',{cls:'note',text:(dg.length-40)+' more in graph.json (nodes with defaultGrants).'}));g.appendChild(pc)}
-  /* coverage */
-  var cv=D.coverage||{};var pk=panel('Coverage','w12','how far to trust this');var kv=h('div',{cls:'kv'});
-  var kvr=function(k,v,warn){kv.appendChild(h('span',{text:k}));kv.appendChild(h('span',{cls:'n'+(warn?' warn':''),text:v==null?'\u2014':String(v)}))};
-  kvr('files scanned',cv.files,!cv.files);kvr('call sites found',cv.call_sites,!cv.call_sites);kvr('unresolved calls (dynamic names)',cv.unresolved,cv.unresolved>0);
-  if(D.source==='catalog')kvr('schema source','live catalog');else{kvr('migrations replayed',cv.migrations,!cv.migrations);kvr('SQL statements not understood',cv.sql_unparsed,cv.sql_unparsed>0)}
-  kvr('partly parsed files',cv.partial,cv.partial>0);kvr('unreadable files',cv.unreadable,cv.unreadable>0);pk.appendChild(kv);
-  (D.notices||[]).forEach(function(n){pk.appendChild(h('p',{cls:'note',style:'margin:8px 0 0',text:n}))});g.appendChild(pk);
+  if(dg.length){var tl=h('table',{cls:'t'});dg.slice(0,40).forEach(function(n){var site=(inc.get(n.id)||[]).filter(function(e){return /^(from|from-weak)$/.test(e.relation)})[0];var nm=h('button',{type:'button',cls:'ghost',text:n.label});nm.addEventListener('click',function(){selectNode(n.id)});
+      tl.appendChild(h('tr',null,h('td',null,nm),h('td',{cls:'mono-s',text:n.defaultGrants.join(', ').toUpperCase()}),h('td',{text:site&&site.at&&site.at[0]?site.at[0]:''})))});
+    var bd=h('div',null,tl);if(dg.length>40)bd.appendChild(h('div',{cls:'muted',text:(dg.length-40)+' more in graph.json (nodes with defaultGrants).'}));
+    gr.appendChild(det('Supabase 2026-10-30 change',dg.length+' table'+(dg.length>1?'s':''),'The client uses these tables, and anon / authenticated hold the privileges below only through Supabase’s legacy default grants. Existing tables keep them; a table dropped and recreated after 2026-10-30, or a project rebuilt from these migrations, loses them until a migration GRANTs them explicitly.',bd))}
+  var inf=D.findings.filter(function(f){return f.tier==='info'&&inFilter(f)});
+  gr.appendChild(det('Info ('+inf.length+')',null,null,inf.length?findingTable(inf.slice(0,200)):h('span',{cls:'muted',text:'Nothing in this tier.'})));
+  if((D.notices||[]).length)gr.appendChild(det('Scan notices',D.notices.length,null,h('div',null,D.notices.map(function(n){return h('div',{text:n})}))));
 }
 
 function draw(){if(state.view==='dash')drawDash();else if(state.view==='path'){if(state.node&&byId.has(state.node))drawPath();else emptyPath()}else if(state.view==='map')drawMap()}
