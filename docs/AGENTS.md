@@ -9,7 +9,8 @@ reachability before changing the Supabase surface.
 Before changing, revoking, dropping or renaming a Supabase table, RPC, policy, grant or edge
 function, run `npx --yes supareach@0.2.0 --out .supareach` from the repo root and check callers:
 
-- Read `.supareach/report.md` for findings (`file:line`). Do not read `graph.html`.
+- Read `.supareach/report.md` for findings (`file:line`), grouped Fix / Review / Info; start
+  with Fix. Do not read `graph.html`.
 - Who calls X: incoming `links` in `.supareach/graph.json` whose `target` is the node id
   (`table:<name>`, `fn:<name>/<arity>`, `edge:<name>`, `bucket:<name>`). Example:
   `node -e 'const g=require("./.supareach/graph.json");for(const l of g.links.filter(l=>l.target===process.argv[1]))console.log(l.source,l.relation,l.at.join(" "))' fn:my_rpc/1`

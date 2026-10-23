@@ -9,6 +9,40 @@ A correctness and safety release driven by five red-team reviews (security, SQL 
 code extraction, nine real repositories, launch readiness). Findings changed for most
 projects: re-run `--update-baseline` after reviewing them.
 
+### Tiers and the viewer (final pre-launch round)
+- Every finding has a tier: **Fix** (high confidence; act on it), **Review** (same kinds of
+  problem with a caveat, or a functional problem), **Info** (intended patterns). The tier is in
+  `graph.json`, `report.md` (grouped by tier), SARIF (`sarifLevels`: fix=error, review=warning,
+  info=note by default), annotations and the console, and never in the fingerprint.
+- `--check` now gates only new **Fix** findings; `--check-level review` gates Fix and Review.
+  The baseline still records Fix and Review fingerprints, so switching levels does not turn
+  accepted findings into new ones.
+- The console prints `Fix N · Review N · Info N`, lists Fix first (top 10 with `file:line`),
+  and counts each rule by the level its findings actually have (it used to print the rule's
+  default level, e.g. "30 error" for 30 warnings).
+- New `graph.html`: findings sidebar by tier with search and filters; a path view (Code |
+  Entry points | Database | Roles) for the selected finding; a full map with collapsed groups;
+  an optional 3D showcase that lazy-loads a pinned library from jsDelivr with SRI.
+- New review-tier rules: `edge-service-role-before-auth`, `edge-request-controlled-fetch`.
+
+### Analysis fixes (final pre-launch round)
+- Functions named in a `DO` block that creates or alters policies with `EXECUTE format(...)`
+  (in the template or an argument) count as used by policies: never "revoke it".
+- `FOR r IN SELECT ... FROM pg_proc WHERE proname IN ('a', 'b') LOOP EXECUTE format('revoke
+  ...', r.oid::regprocedure)` is applied per name; with a `LIKE` pattern or an unknown list the
+  functions it could touch are low confidence (Review).
+- Column-level grants (`grant select (a, b) on t`) count as table privileges; a column list
+  built in a `DO` block makes `client-table-not-granted` low confidence; a column-level revoke
+  no longer removes table-level privileges.
+- Local wrappers (`const call = (fn: string) => db.rpc(fn)`, `useCallback` wrappers) whose call
+  sites all pass literals no longer leave an unresolved site; parameter types that are literal
+  unions through a type alias, `keyof typeof OBJ` or `(typeof ARR)[number]` resolve.
+- Imports resolve through the nearest tsconfig.json / jsconfig.json `paths` (one level of
+  `extends`) and workspace package names.
+- Nuxt `serverSupabaseServiceRole(event)` and keys named `SERVICE_KEY` / `SUPABASE_SECRET` mark
+  a client as privileged.
+- SECURITY.md: the baseline file is PR-controlled; review its diffs.
+
 ### Default grants (decision)
 - `supabaseDefaultGrants` now defaults to `"auto"`. Supabase CLI v2.106.0 treats an unset
   `[api] auto_expose_new_tables` as false and the key is removed on 2026-10-30, so neither

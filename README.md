@@ -31,9 +31,30 @@ run exits 2).
 |---|---|
 | `report.md` | Findings with `file:line`, suppressions with their reasons, and everything it could not resolve, parse or apply |
 | `graph.json` | `schema_version` 1. networkx node-link graph (`nodes`, `links` with `relation` and `confidence`: `extracted`, `inferred` or `ambiguous`), plus `rules`, `findings`, `suppressed`, `stats`, `project`, `warnings` |
-| `graph.html` | One self-contained page, no CDN. Large graphs open focused on findings and their neighbours with files grouped by folder; "show all" and click-to-expand. |
+| `graph.html` | One self-contained page that works offline. Findings sidebar grouped Fix / Review / Info with search and filters; a **path view** that shows a selected finding's neighbourhood in columns (Code, Entry points, Database, Roles), including "no caller in code"; a **full map** with folders and schema+kind groups collapsed until clicked; and an optional **3D** showcase. |
+
+The 3D view is the only thing that touches the network: on click it loads one pinned library,
+`3d-force-graph@1.80.1` from jsDelivr, with a Subresource Integrity hash and
+`crossorigin="anonymous"`. Nothing else is fetched and no data leaves the page. Offline, it
+says so and the 2D views keep working. Deep links: `graph.html#f=<fingerprint>` (or `f=first`)
+selects a finding, `view=map` or `view=3d` opens that view.
 
 ## What it finds
+
+Every finding has a **tier**:
+
+- **Fix**: high confidence. Reachable by anon/authenticated (or PUBLIC) with no recognised
+  caller and no dynamic call or dynamic SQL that could change that; client-read tables without
+  RLS; owner-rights views over RLS tables; client-callable auth hooks. Act on these.
+- **Review**: the same kinds of problem with a caveat (unresolved dynamic calls could reach it,
+  dynamic SQL may grant or revoke, the service-role client was recognised by a heuristic, it is
+  reached only indirectly), or a functional problem rather than an exposure (missing RPCs,
+  tables the client cannot reach, uncalled edge functions, edge-function hints).
+- **Info**: intended or benign patterns, such as helpers that RLS policies need.
+
+The tier is not part of the fingerprint, so a finding that moves between tiers keeps its
+baseline entry. Accepted findings (`supareach: ignore` hatches and `ignore` config) are not
+findings at all; they are listed under Suppressed.
 
 | Rule | Level | Meaning |
 |---|---|---|
@@ -48,6 +69,15 @@ run exits 2).
 | `unknown-table` | warning | code queries a table or view the schema does not define |
 | `uncalled-edge-function` | warning | no `functions.invoke`, `/functions/v1/<name>` URL, cron, webhook, auth hook or SQL caller, and not declared an entry point |
 | `missing-edge-function` | error | invoked, but no such function in `supabase/functions` |
+| `edge-service-role-before-auth` | warning | an edge function uses a service_role / secret-key client before (or without) anything that looks like an auth or signature check (review) |
+| `edge-request-controlled-fetch` | warning | an edge function calls `fetch()` with a URL taken from the request body (review) |
+
+Tiers by rule: `exposed-uncalled-function`, `client-table-without-rls`,
+`client-view-without-security-invoker` and `auth-hook-function-exposed` are Fix unless a caveat
+applies (then Review); `granted-helper-function` is Info, or Review when it is SECURITY DEFINER
+and callable by anon or not needed by any caller. Functions named in a `DO` block that creates or
+alters policies with `EXECUTE` count as policy-used and are never Fix. The rest are Review.
+Plugin rules may set `tier`; otherwise error maps to Fix, warning to Review, note to Info.
 
 Functions are identified as `name/arity` (`next_invoice_number/1`). Each finding has a stable
 fingerprint, `<rule>:<subject>`, records whether it rests on migrations or the live catalog,
@@ -137,6 +167,8 @@ dropped**. A `// supareach: names a,b` comment above the call or its wrapper res
 Every ignore and entry point needs a `reason`; a bare string is a config error. Unknown keys
 warn. Paths must stay inside the project. `ignore` also has `edgeFunctions`, `tables` and
 `rpcs` lists. `migrations` and `functionsDir` override the auto-detected directories.
+`sarifLevels` (default `{ "fix": "error", "review": "warning", "info": "note" }`) sets the
+SARIF and GitHub annotation level per tier; `"none"` drops a tier's annotations.
 
 **Edge-function entry points.** Webhooks, OAuth callbacks and health checks have no caller in
 your code. Declare them in `entryPoints`, or put `// supareach: entry-point <reason>` in the
@@ -182,11 +214,13 @@ normalised schema. See `examples/demo-app/supareach-rules.mjs`.
 
 ```sh
 npx --yes supareach@0.2.0 --update-baseline      # writes supareach.baseline.json; commit it
-npx --yes supareach@0.2.0 --check --no-output    # exit 1 if any finding is not in the baseline
+npx --yes supareach@0.2.0 --check --no-output    # exit 1 on a new Fix finding not in the baseline
 ```
 
-The baseline is a list of fingerprints. `--check` fails on any error or warning not in it, so
-fixing one finding and adding another still fails. `--update-baseline` only removes entries
+The baseline is a list of fingerprints (Fix and Review findings). By default `--check` fails on
+any **Fix** finding not in it; `--check-level review` gates Fix and Review. Info never gates.
+Fixing one finding and adding another still fails. Review baseline diffs like code: a pull
+request controls the file (see SECURITY.md). `--update-baseline` only removes entries
 from an existing baseline; adding needs `--force`. Exit codes: 0 clean, 1 new findings, 2 usage
 or tool error, or an empty scan under `--check`.
 
@@ -234,7 +268,7 @@ the default branch, schedule), never from `pull_request`.
 supareach [dir] [options]
 supareach help | --demo
   --out <dir>  --config <file>  --baseline <file>  --db-url <url>
-  --check  --update-baseline [--force]  --sarif <file>  --github  --no-output
+  --check [--check-level fix|review]  --update-baseline [--force]  --sarif <file>  --github  --no-output
   --allow-plugins | --no-plugins  --demo  -h/--help  -v/--version
 ```
 

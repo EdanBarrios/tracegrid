@@ -29,7 +29,9 @@ npx --yes supareach@0.2.0 --out .supareach
 - Catalog mode is exact; migration mode is best effort. Use `--db-url` only if the user gives
   you a URL or `SUPAREACH_DB_URL` is already set. Never ask for, print or store a password,
   and never use a `service_role` key (supareach does not take one).
-- Exit codes: 0 ran, 1 new findings with `--check`, 2 usage/tool error or an empty scan with
+- Findings have a `tier`: `fix` (act on it), `review` (check the caveat in `note` first),
+  `info` (intended patterns, such as helpers RLS policies need). Start with `fix`.
+- Exit codes: 0 ran, 1 new Fix findings with `--check` (Fix or Review with `--check-level review`), 2 usage/tool error or an empty scan with
   `--check`. Without `--check`, findings still exit 0.
 
 Add `.supareach/` to `.gitignore` if it is not there. Do not commit generated output.

@@ -8,7 +8,9 @@ even `node_modules/.bin`. The defaults below assume that.
 
 - **Offline by default.** Without `--db-url` it reads files under the directory you give it and
   writes only to the output directory, the baseline file and any `--sarif` file you name. No
-  network, no telemetry. (`npx` itself downloads the package.)
+  network, no telemetry. (`npx` itself downloads the package.) `graph.html` works offline; only
+  its optional 3D view, when you click it, loads `3d-force-graph@1.80.1` from jsDelivr with a
+  Subresource Integrity hash and `crossorigin="anonymous"`. The page sends nothing anywhere.
 - **Reads stay inside the project.** `include`/`exclude` globs, `supabaseDir`, `migrations` and
   `functionsDir` may not contain `..` or absolute paths. Symbolic links are followed only when
   their target is inside the project; a link to `/home/runner/...` is not read.
