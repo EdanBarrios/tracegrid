@@ -169,3 +169,27 @@ test('catalog groups functions by name + arity; same-arity overloads merge with 
   assert.deepEqual(by['g/1'].signatures, ['g(integer)', 'g(text)']);
   assert.equal(by['s.h/0'].schema, 's');
 });
+
+test('unparsed statements touching grants or policies are flagged risky and raise a warning', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { scanMigrations } = await import('../src/scan-sql.js');
+  const { analyze } = await import('../src/analyze.js');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  fs.mkdirSync(path.join(tmp, 'supabase/migrations'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'supabase/migrations/1_a.sql'), `
+    create table t (id int);
+    do $$ declare r record; begin
+      for r in select policyname from pg_policies where tablename = 't' loop
+        execute format('drop policy %I on t', r.policyname);
+      end loop;
+    end $$;
+    do $$ begin execute 'create index i on t(id)'; end $$;`);
+  const st = scanMigrations(path.join(tmp, 'supabase/migrations'));
+  assert.deepEqual(st.unparsed.map((u) => u.risky), [true, false]);
+  const r = await analyze(tmp);
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0], /1 migration statement\(s\)[\s\S]*--db-url/);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});

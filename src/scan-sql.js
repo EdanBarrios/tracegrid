@@ -241,12 +241,12 @@ export function applyStatement(st, s, file) {
         const t = inner.outer.replace(/\s+/g, ' ');
         const k = /\b(create\s+(or\s+replace\s+)?(policy|function|procedure|table|view|trigger)\b|alter\s+default\s+privileges\b|alter\s+(table|function|policy|view)\b|drop\s+(policy|function|table|view|trigger)\b|grant\s|revoke\s)/i.exec(t);
         if (k && (/\bexecute\b/i.test(t.slice(0, k.index)) || /%[IsL]|\$\d|\|\|/.test(t.slice(k.index)))) {
-          st.unparsed.push({ ...loc, line: s.line + inner.line - 1, reason: 'dynamic SQL (EXECUTE) in DO block', text: short(inner.text) });
+          st.unparsed.push({ ...loc, line: s.line + inner.line - 1, reason: 'dynamic SQL (EXECUTE) in DO block', text: short(inner.text), risky: RISKY_RE.test(inner.text) });
         } else if (k) {
           const off = inner.outer.search(new RegExp(k[0].replace(/\s+/g, '\\s+'), 'i'));
           applyStatement(st, { ...inner, text: inner.text, outer: inner.outer.slice(off), line: s.line + inner.line - 1 }, file);
         } else if (/\bexecute\b/i.test(t) && /\b(create|grant|revoke|alter|drop)\b/i.test(inner.text)) {
-          st.unparsed.push({ ...loc, reason: 'dynamic SQL (EXECUTE) in DO block', text: short(inner.text) });
+          st.unparsed.push({ ...loc, reason: 'dynamic SQL (EXECUTE) in DO block', text: short(inner.text), risky: RISKY_RE.test(inner.text) });
         } else if (/\bcron\s*\.\s*(schedule|unschedule)/i.test(inner.text)) {
           handleCron(st, inner.text, loc);
         }
@@ -460,6 +460,8 @@ export function applyStatement(st, s, file) {
 }
 
 const short = (s) => s.replace(/\s+/g, ' ').slice(0, 120);
+/** Statements whose loss changes who can call what: grants, revokes, dropped policies. */
+export const RISKY_RE = /\b(grant|revoke)\b|\bdrop\s+policy\b|\balter\s+default\s+privileges\b/i;
 
 /**
  * Heuristic for a common pattern: a DO block that loops over a literal list of function names and runs
@@ -473,7 +475,7 @@ function dynamicGrantLoop(st, body, loc) {
   const names = [...new Set([...body.matchAll(/'([A-Za-z_]\w*)'/g)].map((x) => x[1].toLowerCase()))].filter((n) => st.functions.has(n));
   const isGrant = g[1].toLowerCase() === 'grant';
   for (const n of names) for (const ov of st.functions.get(n).sigs.values()) for (const r of roles) ov.grants[r] = isGrant;
-  st.unparsed.push({ ...loc, reason: `dynamic ${g[1].toLowerCase()} loop: applied heuristically to ${names.length} named function(s)`, text: short(names.join(', ')) });
+  st.unparsed.push({ ...loc, reason: `dynamic ${g[1].toLowerCase()} loop: applied heuristically to ${names.length} named function(s)`, text: short(names.join(', ')), risky: true });
   return true;
 }
 
@@ -528,7 +530,9 @@ export function scanMigrations(dir, opts = {}) {
     const sql = fs.readFileSync(path.join(dir, f), 'utf8');
     const stmts = splitStatements(sql);
     for (const s of stmts) {
+      const before = st.unparsed.length;
       try { applyStatement(st, s, rel); } catch (e) { st.unparsed.push({ file: rel, line: s.line, reason: 'parser error: ' + e.message, text: short(s.outer) }); }
+      for (let i = before; i < st.unparsed.length; i++) if (st.unparsed[i].risky === undefined) st.unparsed[i].risky = RISKY_RE.test(s.text);
     }
     sqlHatches(st, parseHatches(sql), stmts, rel);
   }

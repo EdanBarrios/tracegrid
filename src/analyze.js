@@ -186,6 +186,14 @@ export async function analyze(root, opts = {}) {
     invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid, ...entryInvalid],
   };
 
+  const warnings = [];
+  const risky = catalog.unparsed.filter((u) => u.risky);
+  if (catalog.source === 'migrations' && risky.length) {
+    warnings.push(`${risky.length} migration statement(s) the parser did not apply contain GRANT, REVOKE or DROP POLICY `
+      + `(first: ${risky[0].file}:${risky[0].line}). Findings that depend on grants and policies may be wrong; `
+      + 'run with --db-url against a database built from these migrations to use the real catalog.');
+  }
+
   const stats = {
     files_scanned: files.length,
     call_sites: code.calls.length,
@@ -206,6 +214,8 @@ export async function analyze(root, opts = {}) {
     schema_version: SCHEMA_VERSION,
     generated_at: new Date().toISOString(),
     root: path.basename(root),
+    source: catalog.source,
+    warnings,
     stats,
     rules: ran.rules,
     counts: Object.fromEntries(ran.rules.map((r) => [r.id, ran.findings.filter((f) => f.rule === r.id).length])),

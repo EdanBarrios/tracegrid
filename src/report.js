@@ -4,6 +4,8 @@ const esc = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/`/g, "'");
 export function renderReport(r) {
   const L = [];
   L.push(`# supareach report: ${r.root}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
+  if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${w}`, ''); }
+  L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
   L.push('## Summary', '', '| Finding | Count |', '|---|---|');
   for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`, ${rule.level}) | ${r.counts[rule.id]} |`);
   L.push(`| Storage buckets referenced (info) | ${r.info.storage_buckets.length} |`);
@@ -56,7 +58,7 @@ export function renderReport(r) {
   L.push(`## SQL not understood (${r.info.unparsed_sql.length})`, '', 'Statements the migration parser skipped or could not apply. State derived from them may be wrong.', '');
   if (r.info.unparsed_sql.length) {
     L.push('| Where | Reason | Statement |', '|---|---|---|');
-    for (const u of r.info.unparsed_sql) L.push(`| \`${u.file}:${u.line}\` | ${esc(u.reason)} | \`${esc(u.text)}\` |`);
+    for (const u of r.info.unparsed_sql) L.push(`| \`${u.file}:${u.line}\` | ${u.risky ? '**touches grants/policies** ' : ''}${esc(u.reason)} | \`${esc(u.text)}\` |`);
   }
   L.push('');
   if (r.info.invalid_hatches.length) {

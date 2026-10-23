@@ -81,6 +81,7 @@ async function main() {
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
   for (const rule of r.rules) console.log(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
   if (r.suppressed.length) console.log(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);
+  for (const w of r.warnings) console.error(`warning: ${w}`);
   for (const h of r.info.invalid_hatches) console.error(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
 
   const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
