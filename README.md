@@ -69,7 +69,7 @@ findings at all; they are listed under Suppressed.
 | `unknown-table` | warning | code queries a table or view the schema does not define |
 | `uncalled-edge-function` | warning | no `functions.invoke`, `/functions/v1/<name>` URL, cron, webhook, auth hook or SQL caller, and not declared an entry point |
 | `missing-edge-function` | error | invoked, but no such function in `supabase/functions` |
-| `edge-service-role-before-auth` | warning | an edge function uses a service_role / secret-key client before (or without) anything that looks like an auth or signature check (review) |
+| `edge-service-role-before-auth` | warning | an edge function's first service_role / secret-key data use comes before every gate supareach recognises (heuristic; review, never fix; info for head/count-only endpoints) |
 | `edge-request-controlled-fetch` | warning | an edge function calls `fetch()` with a URL taken from the request body (review) |
 
 Tiers by rule: `exposed-uncalled-function`, `client-table-without-rls`,
@@ -315,6 +315,7 @@ Read these before revoking anything.
   higher-order functions, clients passed through dependency injection or framework context
   under an unrecognisable name, other languages (Python, Dart, Swift clients), and callers
   outside the repository (other services, the dashboard, partners).
+- **`edge-service-role-before-auth` is a heuristic.** It reads function text, not control flow. It recognises a fixed set of gates (auth calls, webhook and HMAC verifiers, a caller-scoped RLS read that returns or throws, a hashed or opaque-key capability, a rate-limit RPC that returns early) and cannot tell whether a gate is correct or covers every branch. A gate it does not recognise looks like no gate; a recognised name is not proof of a check. Treat it as a prompt to verify that the function authorizes callers.
 - **Unresolved names** are listed in `report.md`; when any could reach an "uncalled" function,
   that finding is a warning with a caveat rather than an error.
 - **Schemas:** `exposedSchemas` defaults to `public`; `.schema(<dynamic>)` matches the name in
