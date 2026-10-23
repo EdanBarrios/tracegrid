@@ -7,7 +7,7 @@ import path from 'node:path';
 import { MAX_SOURCE_FILE } from './scan-code.js';
 
 /** Calls and patterns that count as authenticating or authorising the request. */
-const AUTH_CHECK = /\.auth\s*\.\s*getUser\s*\(|\bgetClaims\s*\(|\bjwtVerify\s*\(|\bverify(?:Jwt|JWT|Token|Signature|Webhook|Hmac|Request|Auth|Caller|User)\w*\s*\(|\bconstructEvent(?:Async)?\s*\(|\brequire(?:User|Auth|Admin|Role|Caller|Session)\w*\s*\(|\bauthori[sz]e\w*\s*\(|\bauthenticate\w*\s*\(|\bgetUser\s*\(|\btimingSafeEqual\b|crypto\s*\.\s*subtle\s*\.\s*verify\b|\bwebhooks?\s*\.\s*verify\b|\bCRON_SECRET\b/;
+const AUTH_CHECK = /\.auth\s*\.\s*getUser\s*\(|\bgetClaims\s*\(|\bjwtVerify\s*\(|\bverify(?:Jwt|JWT|Token|Signature|Webhook|Hmac|Request|Auth|Caller|User)\w*\s*\(|\bconstructEvent(?:Async)?\s*\(|\b(?:check|verify|validate|assert|ensure|require)(?:Cron|Secret|Signature|Token|Auth|User|Caller|Role|Webhook|Admin|Jwt|JWT|Hmac|Session|Bearer|ApiKey|Key|Svix|Stripe|Member|Access|Permission)\w*\s*\(|\bauthori[sz]e\w*\s*\(|\bauthenticate\w*\s*\(|\bgetUser\s*\(|\btimingSafeEqual\b|crypto\s*\.\s*subtle\s*\.\s*verify\b|\bwebhooks?\s*\.\s*verify\b|\bCRON_SECRET\b/;
 const lineAt = (text, idx) => text.slice(0, idx).split('\n').length;
 
 /**

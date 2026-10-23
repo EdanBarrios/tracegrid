@@ -401,3 +401,10 @@ test('R6 a dynamic .rpc() through a service-role client does not caveat exposed-
   assert.ok(f && f.tier === 'fix', JSON.stringify(f));
   assert.ok(r.info.unresolved_dynamic_calls.some((u) => u.privileged));
 });
+
+test('R5b edge hints: a verb-named auth helper (verifyCronHeader, requireAuthedUser) counts as the auth check; requireMethod does not', async () => {
+  const mk = (pre) => `declare function serviceRoleClient(): any; declare function requireMethod(r: any, m: string[]): void; declare function verifyCronHeader(r: any, n: string): void;\nDeno.serve(async (req) => {\n  requireMethod(req, ['POST']);\n  ${pre}\n  const db = serviceRoleClient();\n  await db.from('items').select();\n  return new Response('ok');\n});`;
+  const r = await run({ 'supabase/functions/ef-cron/index.ts': mk(`verifyCronHeader(req, 'X');`), 'supabase/functions/ef-open/index.ts': mk('') });
+  assert.ok(!fp(r).has('edge-service-role-before-auth:ef-cron'));
+  assert.ok(fp(r).has('edge-service-role-before-auth:ef-open'));
+});
