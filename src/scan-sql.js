@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseHatches } from './hatches.js';
+import { isInside } from './safe.js';
 
 const IDENT = String.raw`(?:"[^"]+"|[A-Za-z_][\w$]*)`;
 const QNAME = String.raw`(${IDENT}(?:\s*\.\s*${IDENT})?)`;
@@ -210,7 +211,7 @@ export function createState(opts = {}) {
     tables: new Map(), views: new Map(), functions: new Map(), triggers: new Map(), cron: new Map(), dynamic: [],
     hatches: { suppress: [], invalid: [] },
     defaults: { public: true, anon: sb, authenticated: sb },
-    unparsed: [], stats: { files: 0, statements: 0, handled: 0, ignored: 0, doBlocks: 0 },
+    unparsed: [], skipped: [], stats: { files: 0, statements: 0, handled: 0, ignored: 0, doBlocks: 0 },
   };
 }
 
@@ -525,8 +526,9 @@ export function scanMigrations(dir, opts = {}) {
   if (!fs.existsSync(dir)) return st;
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
   for (const f of files) {
-    st.stats.files++;
     const rel = (opts.relDir || path.basename(dir)).replace(/\/+$/, '') + '/' + f;
+    if (opts.root && !isInside(opts.root, path.join(dir, f))) { st.skipped.push({ file: rel, reason: 'symbolic link to a file outside the project' }); continue; }
+    st.stats.files++;
     const sql = fs.readFileSync(path.join(dir, f), 'utf8');
     const stmts = splitStatements(sql);
     for (const s of stmts) {

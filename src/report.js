@@ -1,10 +1,17 @@
-// Markdown report.
-const esc = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/`/g, "'");
+// Markdown report. Every name, path and message can come from the scanned project, so all of it goes
+// through mdCode() (inline code) or mdText() (escaped prose): no data can add lines, headings or HTML.
+import { mdCode, mdText } from './safe.js';
+
+const esc = mdText;
+const code = mdCode;
+
+/** Inline code inside a table cell: `|` must be escaped even inside a code span. */
+const tcode = (s) => code(s).replace(/\|/g, '\\|');
 
 export function renderReport(r) {
   const L = [];
-  L.push(`# supareach report: ${r.root}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
-  if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${w}`, ''); }
+  L.push(`# supareach report: ${esc(r.root)}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
+  if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${esc(w)}`, ''); }
   L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
   L.push('## Summary', '', '| Finding | Count |', '|---|---|');
   for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`, ${rule.level}) | ${r.counts[rule.id]} |`);
@@ -32,43 +39,43 @@ export function renderReport(r) {
       if (it.usedBy) bits.push(`used by ${it.usedBy.join(', ')}`);
       if (it.message) bits.push(it.message);
       if (it.note) bits.push(it.note);
-      L.push(`- \`${it.id}\`${bits.length ? ' (' + bits.join('; ') + ')' : ''}${it.at ? ' at `' + it.at + '`' : ''}`);
+      L.push(`- ${code(it.id)}${bits.length ? ' (' + esc(bits.join('; ')) + ')' : ''}${it.at ? ' at ' + code(it.at) : ''}`);
     }
     L.push('');
   }
 
   if (r.suppressed.length) {
     L.push(`## Suppressed (${r.suppressed.length})`, '', 'Findings silenced by config or an in-source hatch, with the reason given.', '');
-    for (const f of r.suppressed) L.push(`- \`${f.fingerprint}\`: ${esc(f.suppressed)}`);
+    for (const f of r.suppressed) L.push(`- ${code(f.fingerprint)}: ${esc(f.suppressed)}`);
     L.push('');
   }
   const ext = r.info.external_entry_points || [];
   L.push(`## External entry points (${ext.length})`, '', 'Edge functions treated as called from outside the codebase, so they are not reported as uncalled. Check the reasons still hold.', '');
-  for (const e of ext) L.push(`- \`${e.id}\`: ${esc(e.reason)} (${esc(e.source)})`);
+  for (const e of ext) L.push(`- ${code(e.id)}: ${esc(e.reason)} (${esc(e.source)})`);
   L.push('');
   L.push(`## Storage buckets referenced (${r.info.storage_buckets.length})`, '');
-  for (const b of r.info.storage_buckets) L.push(`- \`${b.id}\`: ${b.sites} site(s), first at \`${b.at}\``);
+  for (const b of r.info.storage_buckets) L.push(`- ${code(b.id)}: ${b.sites} site(s), first at ${code(b.at)}`);
   L.push('');
   L.push(`## Unresolved dynamic names (${r.info.unresolved_dynamic_calls.length})`, '', 'Calls whose target name is not a literal. They are counted and listed, never dropped. A function reached only through one of these may appear in "nothing calls" above.', '');
   if (r.info.unresolved_dynamic_calls.length) {
     L.push('| Kind | Where | Expression |', '|---|---|---|');
-    for (const u of r.info.unresolved_dynamic_calls) L.push(`| ${u.kind} | \`${u.file}:${u.line}\` | \`${esc(u.expr)}\` |`);
+    for (const u of r.info.unresolved_dynamic_calls) L.push(`| ${esc(u.kind)} | ${tcode(`${u.file}:${u.line}`)} | ${tcode(u.expr)} |`);
   }
   L.push('');
   L.push(`## SQL not understood (${r.info.unparsed_sql.length})`, '', 'Statements the migration parser skipped or could not apply. State derived from them may be wrong.', '');
   if (r.info.unparsed_sql.length) {
     L.push('| Where | Reason | Statement |', '|---|---|---|');
-    for (const u of r.info.unparsed_sql) L.push(`| \`${u.file}:${u.line}\` | ${u.risky ? '**touches grants/policies** ' : ''}${esc(u.reason)} | \`${esc(u.text)}\` |`);
+    for (const u of r.info.unparsed_sql) L.push(`| ${tcode(`${u.file}:${u.line}`)} | ${u.risky ? '**touches grants/policies** ' : ''}${esc(u.reason)} | ${tcode(u.text)} |`);
   }
   L.push('');
   if (r.info.invalid_hatches.length) {
     L.push(`## Hatches that were not applied (${r.info.invalid_hatches.length})`, '');
-    for (const h of r.info.invalid_hatches) L.push(`- \`${h.file}:${h.line}\`: ${esc(h.error)}`);
+    for (const h of r.info.invalid_hatches) L.push(`- ${code(`${h.file}:${h.line}`)}: ${esc(h.error)}`);
     L.push('');
   }
   if (r.info.unreadable_files.length) {
     L.push('## Files that failed to parse', '');
-    for (const f of r.info.unreadable_files) L.push(`- \`${f.file}\`: ${f.error}`);
+    for (const f of r.info.unreadable_files) L.push(`- ${code(f.file)}: ${esc(f.error)}`);
     L.push('');
   }
   return L.join('\n');

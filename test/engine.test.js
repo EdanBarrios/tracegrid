@@ -35,7 +35,7 @@ test('runRules stamps fingerprints, dedupes subjects and applies suppression', (
 });
 
 test('plugins load from config paths and run like core rules', async () => {
-  const r = await analyze(demo);
+  const r = await analyze(demo, { allowPlugins: true });
   const f = r.findings.filter((x) => x.rule === 'demo/client-writes-protected-table');
   assert.deepEqual(f.map((x) => x.id), ['audit_log']);
   assert.equal(f[0].level, 'error');

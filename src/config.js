@@ -1,6 +1,7 @@
 // Config loading and a tiny dependency-free glob matcher.
 import fs from 'node:fs';
 import path from 'node:path';
+import { isInside, realOr } from './safe.js';
 
 /** @typedef {{
  *   include: string[], exclude: string[], migrations: string, functionsDir: string,
@@ -47,7 +48,25 @@ export function loadConfig(root, file) {
     else c[k] = user[k];
   }
   validateConfig(c, p);
+  validatePaths(c, root, p);
   return c;
+}
+
+/** Config-derived paths stay inside the project: a fork PR controls the config file. */
+export function validatePaths(c, root, file = 'config') {
+  const bad = (msg) => { throw new ConfigError(`${file}: ${msg}`); };
+  for (const k of ['include', 'exclude']) {
+    if (!Array.isArray(c[k])) bad(`${k} must be an array of globs`);
+    for (const g of c[k]) {
+      if (typeof g !== 'string' || !g) bad(`${k} entries must be non-empty strings`);
+      if (path.isAbsolute(g) || /^[A-Za-z]:/.test(g) || g.split('/').includes('..')) bad(`${k}: "${g}" points outside the project (no absolute paths or "..")`);
+    }
+  }
+  for (const k of ['migrations', 'functionsDir']) {
+    if (c[k] == null) continue;
+    if (typeof c[k] !== 'string' || !c[k]) bad(`${k} must be a path relative to the project`);
+    if (path.isAbsolute(c[k]) || !isInside(root, path.resolve(root, c[k]))) bad(`${k}: "${c[k]}" is outside the project root (".." and absolute paths are not allowed)`);
+  }
 }
 
 export class ConfigError extends Error {}
@@ -103,32 +122,49 @@ function globBase(glob) {
   return out.join('/');
 }
 
-/** List files under root matching include globs and not matching exclude globs. */
+/**
+ * List files under root matching include globs and not matching exclude globs. Symbolic links are
+ * followed only when their target is inside the project root; nothing outside the root is read.
+ */
 export function findFiles(root, include, exclude) {
   const inc = include.map(globToRegExp);
   const exc = exclude.map(globToRegExp);
+  const realRoot = realOr(root);
   const seen = new Set();
   const out = [];
   for (const g of include) {
+    if (path.isAbsolute(g) || g.split('/').includes('..')) continue;
     const base = path.join(root, globBase(g));
-    if (!fs.existsSync(base)) continue;
-    const stack = [base];
+    if (!isInside(realRoot, base)) continue;
+    const stack = [[base, []]];
     while (stack.length) {
-      const dir = stack.pop();
+      const [dir, chain] = stack.pop();
       let st;
       try { st = fs.statSync(dir); } catch { continue; }
       if (st.isFile()) { consider(dir); continue; }
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!st.isDirectory()) continue;
+      const real = realOr(dir);
+      if (chain.includes(real) || chain.length > 64 || !isInside(realRoot, real)) continue; // a symlink loop, or outside the project
+      const next = [...chain, real];
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const e of entries) {
         if (e.name === 'node_modules' || e.name === '.git') continue;
         const full = path.join(dir, e.name);
-        if (e.isDirectory()) stack.push(full);
+        if (e.isSymbolicLink()) {
+          if (!isInside(realRoot, full)) continue; // link target outside the project: never followed
+          let t;
+          try { t = fs.statSync(full); } catch { continue; }
+          if (t.isDirectory()) stack.push([full, next]);
+          else if (t.isFile()) consider(full);
+        } else if (e.isDirectory()) stack.push([full, next]);
         else if (e.isFile()) consider(full);
       }
     }
   }
   function consider(full) {
     const rel = path.relative(root, full).split(path.sep).join('/');
-    if (seen.has(rel)) return;
+    if (seen.has(rel) || rel.startsWith('..')) return;
     if (!inc.some((r) => r.test(rel))) return;
     if (exc.some((r) => r.test(rel))) return;
     seen.add(rel);

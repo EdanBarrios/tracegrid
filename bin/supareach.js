@@ -5,7 +5,8 @@ import { analyze } from '../src/analyze.js';
 import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
 import { ConfigError } from '../src/config.js';
-import { RuleError } from '../src/engine.js';
+import { RuleError, pluginRefusal } from '../src/engine.js';
+import { oneLine } from '../src/safe.js';
 import { DbError } from '../src/db.js';
 import { readBaseline, writeBaseline, compareBaseline, BaselineError } from '../src/baseline.js';
 import { toSarif, githubAnnotations, stepSummary } from '../src/ci.js';
@@ -30,6 +31,10 @@ Options:
   --github             Print GitHub annotations (new findings only with --check) and
                        append a table to $GITHUB_STEP_SUMMARY
   --no-output          Do not write graph.json / report.md / graph.html
+  --allow-plugins      Load the rule plugins listed in the config. Plugins are code from the
+                       repository: never use this on pull requests (refused on GitHub
+                       pull_request and pull_request_target events)
+  --no-plugins         Run without the plugins listed in the config
   -h, --help           Show this help
   -v, --version        Show version
 
@@ -51,6 +56,8 @@ function parseArgs(argv) {
     else if (x === '--update-baseline') a.update = true;
     else if (x === '--force') a.force = true;
     else if (x === '--no-output') a.output = false;
+    else if (x === '--allow-plugins') a.allowPlugins = true;
+    else if (x === '--no-plugins') a.noPlugins = true;
     else if (x === '-h' || x === '--help') a.help = true;
     else if (x === '-v' || x === '--version') a.version = true;
     else if (x.startsWith('-')) fail(`Unknown option ${x}\n\n${HELP}`);
@@ -60,6 +67,10 @@ function parseArgs(argv) {
 }
 
 function fail(msg) { console.error(msg); process.exit(2); }
+// Console output carries names from the scanned project: one line per datum, control characters
+// escaped, so nothing a pull request writes can become a GitHub workflow command.
+const say = (...lines) => { for (const l of lines) console.log(oneLine(l)); };
+const warn = (...lines) => { for (const l of lines) console.error(oneLine(l)); };
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -73,8 +84,10 @@ async function main() {
   if (!fs.existsSync(root)) fail(`No such directory: ${root}`);
   let r;
   const dbUrl = args.dbUrl || process.env.SUPAREACH_DB_URL || undefined;
-  try { r = await analyze(root, { configFile: args.config, dbUrl }); } catch (e) {
-    if (e instanceof ConfigError || e instanceof RuleError || e instanceof DbError) fail(`supareach: ${e.message}`);
+  if (args.allowPlugins && args.noPlugins) fail('--allow-plugins and --no-plugins are exclusive');
+  if (args.allowPlugins) { const why = pluginRefusal(); if (why) fail(`supareach: ${why}`); }
+  try { r = await analyze(root, { configFile: args.config, dbUrl, allowPlugins: !!args.allowPlugins, noPlugins: !!args.noPlugins }); } catch (e) {
+    if (e instanceof ConfigError || e instanceof RuleError || e instanceof DbError) fail(oneLine(`supareach: ${e.message}`));
     throw e;
   }
 
@@ -93,8 +106,8 @@ async function main() {
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
   for (const rule of r.rules) console.log(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
   if (r.suppressed.length) console.log(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);
-  for (const w of r.warnings) console.error(`warning: ${w}`);
-  for (const h of r.info.invalid_hatches) console.error(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
+  for (const w of r.warnings) warn(`warning: ${w}`);
+  for (const h of r.info.invalid_hatches) warn(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
 
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const prefixFrom = (base) => { const p = path.relative(base, root).split(path.sep).join('/'); return p.startsWith('..') ? '' : p; };
@@ -115,16 +128,16 @@ async function main() {
     }
     const res = writeBaseline(baselinePath, r, prev, { force: args.force });
     if (res.refused) {
-      console.error(`--update-baseline refused: it would add ${res.added.length} finding(s) to the baseline:\n  ${res.added.join('\n  ')}\nFix them, ignore them with a reason, or rerun with --force.`);
+      warn(`--update-baseline refused: it would add ${res.added.length} finding(s) to the baseline:`, ...res.added.map((x) => `  ${x}`), 'Fix them, ignore them with a reason, or rerun with --force.');
       code = 1;
-    } else console.log(`Baseline written to ${baselinePath} (${res.total} finding(s); ${res.added.length} added, ${res.removed.length} removed)`);
+    } else say(`Baseline written to ${baselinePath} (${res.total} finding(s); ${res.added.length} added, ${res.removed.length} removed)`);
   }
   if (args.check) {
     if (!fs.existsSync(baselinePath)) fail(`--check: no baseline at ${baselinePath}. Run with --update-baseline first.`);
     const c = compareBaseline(readBaseline(baselinePath), r);
     fresh = c.fresh;
-    for (const f of c.fresh) console.error(`NEW ${f.level} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
-    if (c.fixed.length) console.log(`${c.fixed.length} baselined finding(s) no longer present (run --update-baseline to lock that in):\n  ${c.fixed.join('\n  ')}`);
+    for (const f of c.fresh) warn(`NEW ${f.level} ${f.fingerprint}${f.at ? `  (${f.at})` : ''}`);
+    if (c.fixed.length) say(`${c.fixed.length} baselined finding(s) no longer present (run --update-baseline to lock that in):`, ...c.fixed.map((x) => `  ${x}`));
     if (c.fresh.length) { console.error(`check: ${c.fresh.length} new finding(s) not in the baseline`); code = 1; }
     else console.log('check: no new findings');
   }
@@ -136,4 +149,4 @@ async function main() {
   return code;
 }
 
-main().then((c) => process.exit(c), (e) => { console.error(e instanceof BaselineError ? `supareach: ${e.message}` : (e && e.stack) || e); process.exit(2); });
+main().then((c) => process.exit(c), (e) => { console.error(e instanceof BaselineError ? oneLine(`supareach: ${e.message}`) : String((e && e.stack) || e).split('\n').map(oneLine).join('\n')); process.exit(2); });

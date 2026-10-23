@@ -1,5 +1,6 @@
 // CI outputs: SARIF 2.1.0 for code scanning, GitHub workflow-command annotations and a step summary.
 import path from 'node:path';
+import { mdCode, mdText } from './safe.js';
 
 /** One-line description of a finding, shared by every output. */
 export function describe(f, rule) {
@@ -83,13 +84,13 @@ export function githubAnnotations(findings, rules, prefix = '') {
 export function stepSummary(r, fresh) {
   const L = ['## supareach', ''];
   L.push(`Schema source: **${r.source}**. ${r.stats.call_sites} call sites, ${r.stats.unresolved} unresolved.`, '');
-  for (const w of r.warnings || []) L.push(`> **Warning:** ${w}`, '');
+  for (const w of r.warnings || []) L.push(`> **Warning:** ${mdText(w)}`, '');
   L.push('| Rule | Level | Findings |', '|---|---|---:|');
-  for (const x of r.rules) L.push(`| ${x.title} (\`${x.id}\`) | ${x.level} | ${r.counts[x.id]} |`);
+  for (const x of r.rules) L.push(`| ${mdText(x.title)} (${mdCode(x.id).replace(/\|/g, '\\|')}) | ${x.level} | ${r.counts[x.id]} |`);
   L.push('');
   if (fresh) {
     L.push(fresh.length ? `### ${fresh.length} new finding(s) not in the baseline` : '### No new findings', '');
-    for (const f of fresh.slice(0, 50)) L.push(`- \`${f.fingerprint}\`${f.at ? ` at \`${f.at}\`` : ''}`);
+    for (const f of fresh.slice(0, 50)) L.push(`- ${mdCode(f.fingerprint)}${f.at ? ` at ${mdCode(f.at)}` : ''}`);
     if (fresh.length > 50) L.push(`- ... and ${fresh.length - 50} more`);
     L.push('');
   }

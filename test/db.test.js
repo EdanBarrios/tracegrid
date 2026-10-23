@@ -42,8 +42,8 @@ test('readCatalog refuses output that did not come from a read-only transaction'
 });
 
 test('catalog wins over migrations: dashboard revokes, dashboard functions and cron jobs', async () => {
-  const mig = await analyze(demo);
-  const db = await analyze(demo, { dbUrl: URL_, dbExec: () => fixtureText });
+  const mig = await analyze(demo, { allowPlugins: true });
+  const db = await analyze(demo, { allowPlugins: true, dbUrl: URL_, dbExec: () => fixtureText });
   const ids = (r, k) => r.findings.filter((f) => f.rule === k).map((f) => f.id).sort();
   assert.equal(db.source, 'catalog');
   assert.ok(db.findings.every((f) => f.source === 'catalog'));
@@ -78,7 +78,7 @@ test('CLI --db-url shells out to psql with env credentials and stdin SQL', () =>
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
   const log = path.join(tmp, 'psql.json');
   const env = { ...process.env, SUPAREACH_PSQL: fakePsql, FAKE_PSQL_FIXTURE: fixture, FAKE_PSQL_LOG: log };
-  let r = spawnSync(process.execPath, [bin, demo, '--no-output', '--db-url', URL_], { env, encoding: 'utf8' });
+  let r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /schema from the database catalog/);
   const call = JSON.parse(fs.readFileSync(log, 'utf8'));
@@ -87,14 +87,14 @@ test('CLI --db-url shells out to psql with env credentials and stdin SQL', () =>
   assert.equal(call.env.PGSSLMODE, 'require');
   assert.match(call.stdin, /read only/);
 
-  r = spawnSync(process.execPath, [bin, demo, '--no-output'], { env: { ...env, SUPAREACH_DB_URL: URL_ }, encoding: 'utf8' });
+  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output'], { env: { ...env, SUPAREACH_DB_URL: URL_ }, encoding: 'utf8' });
   assert.match(r.stdout, /schema from the database catalog/);
 
-  r = spawnSync(process.execPath, [bin, demo, '--no-output', '--db-url', URL_], { env: { ...env, FAKE_PSQL_FAIL: '1' }, encoding: 'utf8' });
+  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env: { ...env, FAKE_PSQL_FAIL: '1' }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /psql exited 2: psql: error: connection refused/);
 
-  r = spawnSync(process.execPath, [bin, demo, '--no-output', '--db-url', URL_], { env: { ...env, SUPAREACH_PSQL: path.join(tmp, 'no-such-psql') }, encoding: 'utf8' });
+  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--db-url', URL_], { env: { ...env, SUPAREACH_PSQL: path.join(tmp, 'no-such-psql') }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /not found/);
   fs.rmSync(tmp, { recursive: true, force: true });

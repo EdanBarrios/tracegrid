@@ -13,7 +13,7 @@ const demo = path.join(here, '..', 'examples', 'demo-app');
 const bin = path.join(here, '..', 'bin', 'supareach.js');
 
 test('SARIF 2.1.0: rules, results with locations and fingerprints', async () => {
-  const r = await analyze(demo);
+  const r = await analyze(demo, { allowPlugins: true });
   const s = toSarif(r, { version: '9.9.9', prefix: 'examples/demo-app' });
   assert.equal(s.version, '2.1.0');
   const run = s.runs[0];
@@ -50,12 +50,12 @@ test('CLI --sarif and --github with --check annotate only new findings and write
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
   const baseline = path.join(tmp, 'b.json');
   const summary = path.join(tmp, 'summary.md');
-  let r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', baseline, '--update-baseline'], { encoding: 'utf8' });
+  let r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--baseline', baseline, '--update-baseline'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const b = JSON.parse(fs.readFileSync(baseline, 'utf8'));
   fs.writeFileSync(baseline, JSON.stringify({ ...b, findings: b.findings.filter((x) => x !== 'missing-rpc:delete_everything') }));
   const env = { ...process.env, GITHUB_STEP_SUMMARY: summary, GITHUB_WORKSPACE: path.join(here, '..') };
-  r = spawnSync(process.execPath, [bin, demo, '--no-output', '--baseline', baseline, '--check', '--github', '--sarif', path.join(tmp, 'out.sarif')], { encoding: 'utf8', env });
+  r = spawnSync(process.execPath, [bin, demo, '--allow-plugins', '--no-output', '--baseline', baseline, '--check', '--github', '--sarif', path.join(tmp, 'out.sarif')], { encoding: 'utf8', env });
   assert.equal(r.status, 1);
   const ann = r.stdout.split('\n').filter((l) => l.startsWith('::'));
   assert.deepEqual(ann, ['::error file=examples/demo-app/src/features/projects/api.ts,line=31,title=supareach missing-rpc::RPCs called that the schema does not define: delete_everything (1 call site(s))']);

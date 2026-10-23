@@ -7,7 +7,7 @@ import { fromMigrations, schemaOf } from './catalog.js';
 import { readCatalog, fromDb } from './db.js';
 import { listEdgeFunctions } from './edge-functions.js';
 import { coreRules } from './rules/core.js';
-import { loadPlugins, runRules, makeGraph } from './engine.js';
+import { loadPlugins, runRules, makeGraph, RuleError } from './engine.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -39,13 +39,24 @@ function makeSuppressor(cfg, hatches) {
 export async function analyze(root, opts = {}) {
   root = path.resolve(root);
   const cfg = opts.config || loadConfig(root, opts.configFile);
-  const plugins = opts.rules || await loadPlugins(cfg._dir || root, cfg.plugins || []);
+  const warnings = [];
+  let plugins = opts.rules;
+  if (!plugins) {
+    const listed = cfg.plugins || [];
+    if (listed.length && !opts.allowPlugins) {
+      if (!opts.noPlugins) {
+        throw new RuleError(`config lists ${listed.length} plugin(s), which run as code with your environment: plugins are disabled unless you pass --allow-plugins (only in trusted runs; never on pull requests from forks). Pass --no-plugins to run without them.`);
+      }
+      warnings.push(`${listed.length} plugin(s) in the config were not loaded (--no-plugins).`);
+      plugins = [];
+    } else plugins = await loadPlugins(cfg._dir || root, listed, { root });
+  }
   const files = findFiles(root, cfg.include, cfg.exclude);
   const code = scanFiles(root, files, cfg.wrappers);
-  const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants, relDir: cfg.migrations });
+  const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants, relDir: cfg.migrations, root });
   const replayed = fromMigrations(sql);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
-  const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec } : {}), replayed) : replayed;
+  const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec, root } : { root }), replayed) : replayed;
   const edgeFns = listEdgeFunctions(root, cfg.functionsDir);
   const edgeNames = new Set(edgeFns.map((e) => e.name));
   const fnPrefix = cfg.functionsDir.replace(/\/$/, '') + '/';
@@ -192,7 +203,7 @@ export async function analyze(root, opts = {}) {
   };
 
   for (const f of ran.findings) f.source = f.source || catalog.source;
-  const warnings = [...(catalog.notes || [])];
+  warnings.push(...(catalog.notes || []));
   const risky = catalog.unparsed.filter((u) => u.risky);
   if (catalog.source === 'migrations' && risky.length) {
     warnings.push(`${risky.length} migration statement(s) the parser did not apply contain GRANT, REVOKE or DROP POLICY `

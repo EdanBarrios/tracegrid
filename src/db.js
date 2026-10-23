@@ -4,8 +4,11 @@
 // URL is split into PG* environment variables so the password never appears in a process list.
 // Only catalog tables and has_*_privilege() are read; nothing is written, and no Supabase API key is
 // involved (supareach talks Postgres, never PostgREST, so it never needs service_role).
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { groupFunctions } from './catalog.js';
+import { isInside } from './safe.js';
 
 export class DbError extends Error {}
 
@@ -21,6 +24,7 @@ const priv = (fn, role, obj, p) => `(select ${fn}(r.oid, ${obj}, '${p}') from pg
 /** The whole read, as one psql script. Each select prints one line of JSON: { "section", "data" }. */
 export const CATALOG_SQL = String.raw`
 begin transaction isolation level repeatable read read only;
+set local search_path = pg_catalog, pg_temp;
 set local statement_timeout = '60s';
 select jsonb_build_object('section', 'meta', 'data', jsonb_build_object(
   'server_version_num', current_setting('server_version_num'),
@@ -76,7 +80,7 @@ from storage.buckets;
 rollback;
 `;
 
-const ENV_PARAMS = { sslmode: 'PGSSLMODE', sslrootcert: 'PGSSLROOTCERT', sslcert: 'PGSSLCERT', sslkey: 'PGSSLKEY', application_name: 'PGAPPNAME', connect_timeout: 'PGCONNECT_TIMEOUT', options: 'PGOPTIONS' };
+const ENV_PARAMS = { sslmode: 'PGSSLMODE', sslrootcert: 'PGSSLROOTCERT', sslcert: 'PGSSLCERT', sslkey: 'PGSSLKEY', application_name: 'PGAPPNAME', connect_timeout: 'PGCONNECT_TIMEOUT' };
 
 /** postgres:// URL -> PG* environment. Throws DbError on anything else. */
 export function urlToEnv(url) {
@@ -93,15 +97,16 @@ export function urlToEnv(url) {
   for (const [k, v] of u.searchParams) {
     if (k === 'host') env.PGHOST = v;
     else if (ENV_PARAMS[k]) env[ENV_PARAMS[k]] = v;
+    else if (k === 'options') throw new DbError('--db-url: "options" is not accepted (it can change search_path and other settings for the catalog read)');
     else throw new DbError(`--db-url: unsupported parameter "${k}"`);
   }
   return env;
 }
 
 /** Run the catalog script through psql; returns raw sections. `exec` is injectable for tests. */
-export function readCatalog(url, { exec = execPsql } = {}) {
+export function readCatalog(url, { exec = execPsql, root } = {}) {
   const env = urlToEnv(url);
-  const out = exec(CATALOG_SQL, env);
+  const out = exec(CATALOG_SQL, env, { root });
   const sections = {};
   for (const line of out.split('\n')) {
     const t = line.trim();
@@ -115,10 +120,41 @@ export function readCatalog(url, { exec = execPsql } = {}) {
   return sections;
 }
 
-function execPsql(sql, env) {
-  const bin = process.env.SUPAREACH_PSQL || 'psql';
+/**
+ * Absolute path of the psql binary to run. SUPAREACH_PSQL must be absolute. Otherwise PATH is
+ * searched, and the first psql found must not be relative, inside the project, or under a
+ * node_modules directory: `npx`/`npm exec` put the project's node_modules/.bin first on PATH, and a
+ * pull request can commit a fake psql there that would receive the database password.
+ */
+export function resolvePsql(root, env = process.env) {
+  const refuse = (p, why) => { throw new DbError(`refusing to run psql at ${p}: ${why}. Set SUPAREACH_PSQL to the absolute path of a trusted psql.`); };
+  const check = (p) => {
+    if (root && isInside(root, p)) refuse(p, 'it is inside the project directory');
+    if (p.split(/[\\/]/).includes('node_modules')) refuse(p, 'it is under node_modules');
+    return p;
+  };
+  if (env.SUPAREACH_PSQL) {
+    if (!path.isAbsolute(env.SUPAREACH_PSQL)) throw new DbError('SUPAREACH_PSQL must be an absolute path');
+    return check(env.SUPAREACH_PSQL);
+  }
+  const names = process.platform === 'win32' ? ['psql.exe', 'psql.cmd', 'psql.bat'] : ['psql'];
+  for (const dir of (env.PATH || env.Path || '').split(path.delimiter)) {
+    for (const n of names) {
+      const p = path.join(dir || '.', n);
+      let st;
+      try { st = fs.statSync(p); } catch { continue; }
+      if (!st.isFile()) continue;
+      if (!dir || !path.isAbsolute(dir)) refuse(p, 'it was found through a relative PATH entry');
+      return check(p);
+    }
+  }
+  throw new DbError('psql not found. --db-url needs the PostgreSQL client (psql) on PATH, or set SUPAREACH_PSQL to its absolute path.');
+}
+
+function execPsql(sql, env, { root } = {}) {
+  const bin = resolvePsql(root);
   const r = spawnSync(bin, ['-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-f', '-'], {
-    input: sql, encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 512 * 1024 * 1024, timeout: 120000,
+    input: sql, encoding: 'utf8', env: { ...process.env, PGOPTIONS: '', ...env }, maxBuffer: 256 * 1024 * 1024, timeout: 120000,
   });
   if (r.error && r.error.code === 'ENOENT') throw new DbError(`${bin} not found. --db-url needs the PostgreSQL client (psql) on PATH, or set SUPAREACH_PSQL.`);
   if (r.error) throw new DbError(`psql failed: ${r.error.message}`);

@@ -6,6 +6,7 @@
 // `fingerprint` (`<rule>:<id>`), which is what the baseline stores.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { isInside } from './safe.js';
 
 export const LEVELS = ['error', 'warning', 'note'];
 const RULE_ID = /^[a-z0-9][a-z0-9_.\/-]*$/;
@@ -22,11 +23,30 @@ export function validateRule(r, origin = 'rule') {
   if (typeof r.run !== 'function') throw new RuleError(`${where}: run must be a function`);
 }
 
-/** Import plugin modules listed in config.plugins (paths relative to the config's directory). */
-export async function loadPlugins(baseDir, paths = []) {
+/** GitHub Actions events that run code from a fork (or with fork-controlled inputs). */
+const UNTRUSTED_EVENTS = new Set(['pull_request', 'pull_request_target']);
+
+/**
+ * Why plugins may not run in this environment, or null. Plugins are arbitrary code from the
+ * repository; on a pull_request event that repository is the PR author's.
+ */
+export function pluginRefusal(env = process.env) {
+  if (env.GITHUB_ACTIONS === 'true' && UNTRUSTED_EVENTS.has(env.GITHUB_EVENT_NAME)) {
+    return `plugins are refused on GitHub "${env.GITHUB_EVENT_NAME}" events: the plugin code would come from the pull request. Run without --allow-plugins (or with --no-plugins) on pull requests.`;
+  }
+  return null;
+}
+
+/**
+ * Import plugin modules listed in config.plugins (paths relative to the config's directory).
+ * Every path must resolve inside `root`.
+ */
+export async function loadPlugins(baseDir, paths = [], { root } = {}) {
   const out = [];
   for (const p of paths) {
+    if (typeof p !== 'string' || !p) throw new RuleError('plugins must be an array of paths');
     const abs = path.resolve(baseDir, p);
+    if (root && !isInside(root, abs)) throw new RuleError(`plugin ${p}: resolves outside the project root; plugins must live inside the project`);
     let mod;
     try { mod = await import(pathToFileURL(abs).href); } catch (e) { throw new RuleError(`plugin ${p}: ${e.message}`); }
     const rules = mod.rules || (mod.default && mod.default.rules) || mod.default;
