@@ -7,7 +7,7 @@
   "files": ["bin", "src", "README.md", "LICENSE"],
   "engines": { "node": ">=18" },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "demo": "node bin/supareach.js examples/demo-app"
   },
   "keywords": ["supabase", "postgres", "rls", "static-analysis", "call-graph", "cli"],

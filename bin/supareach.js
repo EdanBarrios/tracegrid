@@ -6,6 +6,7 @@ import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
 import { ConfigError } from '../src/config.js';
 import { RuleError } from '../src/engine.js';
+import { DbError } from '../src/db.js';
 import { readBaseline, writeBaseline, compareBaseline, BaselineError } from '../src/baseline.js';
 
 const HELP = `supareach [dir] [options]
@@ -17,6 +18,9 @@ Options:
   --out <dir>          Output directory (default ./supareach-out)
   --config <file>      Config file (default <dir>/supareach.config.json)
   --baseline <file>    Baseline file (default <dir>/supareach.baseline.json)
+  --db-url <url>       Read the schema from a live database (postgres:// URL) instead of
+                       replaying migrations. Runs psql in a read-only transaction; use a
+                       read-only role. Also read from SUPAREACH_DB_URL.
   --check              Exit 1 if any error/warning finding is not in the baseline
   --update-baseline    Write current findings to the baseline (only removes entries
                        from an existing baseline unless --force)
@@ -36,6 +40,7 @@ function parseArgs(argv) {
     if (x === '--out') a.out = need(++i, x);
     else if (x === '--config') a.config = need(++i, x);
     else if (x === '--baseline') a.baseline = need(++i, x);
+    else if (x === '--db-url') a.dbUrl = need(++i, x);
     else if (x === '--check') a.check = true;
     else if (x === '--update-baseline') a.update = true;
     else if (x === '--force') a.force = true;
@@ -61,8 +66,9 @@ async function main() {
   const root = path.resolve(args.dir);
   if (!fs.existsSync(root)) fail(`No such directory: ${root}`);
   let r;
-  try { r = await analyze(root, { configFile: args.config }); } catch (e) {
-    if (e instanceof ConfigError || e instanceof RuleError) fail(`supareach: ${e.message}`);
+  const dbUrl = args.dbUrl || process.env.SUPAREACH_DB_URL || undefined;
+  try { r = await analyze(root, { configFile: args.config, dbUrl }); } catch (e) {
+    if (e instanceof ConfigError || e instanceof RuleError || e instanceof DbError) fail(`supareach: ${e.message}`);
     throw e;
   }
 
@@ -77,7 +83,7 @@ async function main() {
   }
 
   const s = r.stats;
-  console.log(`${s.files_scanned} files, ${s.call_sites} call sites (${s.unresolved} unresolved), ${s.migrations} migrations (${s.sql_unparsed} statements not understood), ${s.edge_functions} edge functions`);
+  console.log(`${s.files_scanned} files, ${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
   for (const rule of r.rules) console.log(`  ${rule.id.padEnd(w)} ${String(r.counts[rule.id]).padStart(4)}  ${rule.level}`);
   if (r.suppressed.length) console.log(`  (${r.suppressed.length} suppressed with a reason; see report.md)`);

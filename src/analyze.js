@@ -4,6 +4,7 @@ import { loadConfig, findFiles } from './config.js';
 import { scanFiles } from './scan-code.js';
 import { scanMigrations, sqlRefs } from './scan-sql.js';
 import { fromMigrations, schemaOf } from './catalog.js';
+import { readCatalog, fromDb } from './db.js';
 import { listEdgeFunctions } from './edge-functions.js';
 import { coreRules } from './rules/core.js';
 import { loadPlugins, runRules, makeGraph } from './engine.js';
@@ -42,7 +43,9 @@ export async function analyze(root, opts = {}) {
   const files = findFiles(root, cfg.include, cfg.exclude);
   const code = scanFiles(root, files, cfg.wrappers);
   const sql = scanMigrations(path.join(root, cfg.migrations), { supabaseDefaultGrants: cfg.supabaseDefaultGrants });
-  const catalog = fromMigrations(sql);
+  const replayed = fromMigrations(sql);
+  // Catalog wins over migration replay when a database is given; migrations still supply file:line.
+  const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec } : {}), replayed) : replayed;
   const edgeFns = listEdgeFunctions(root, cfg.functionsDir);
   const edgeNames = new Set(edgeFns.map((e) => e.name));
   const fnPrefix = cfg.functionsDir.replace(/\/$/, '') + '/';
@@ -115,7 +118,8 @@ export async function analyze(root, opts = {}) {
     edge('external:http', `edge:${ep.name}`, 'entry-point', ep.confidence, ep.source);
   }
 
-  for (const c of catalog.cron) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: c.at });
+  for (const c of catalog.cron) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: c.at, ...(c.active === false ? { active: false } : {}) });
+  for (const b of catalog.buckets || []) node(`bucket:${b.name}`, 'bucket', b.name, { public: b.public });
 
   // Code edges
   const invoked = new Map();
@@ -135,7 +139,7 @@ export async function analyze(root, opts = {}) {
       edge(caller.id, `edge:${c.name}`, 'invoke', c.confidence, at);
       push(invoked, c.name, at);
     } else if (c.kind === 'bucket') {
-      node(`bucket:${c.name}`, 'bucket', c.name);
+      if (!nodes.has(`bucket:${c.name}`)) node(`bucket:${c.name}`, 'bucket', c.name, catalog.buckets ? { missing: true } : {});
       edge(caller.id, `bucket:${c.name}`, 'storage', c.confidence, at, c.op);
       push(buckets, c.name, at);
     }
@@ -180,13 +184,14 @@ export async function analyze(root, opts = {}) {
   const info = {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),
     unresolved_dynamic_calls: code.unresolved,
-    unparsed_sql: catalog.unparsed,
+    unparsed_sql: catalog.source === 'migrations' ? catalog.unparsed : [],
     unreadable_files: code.failed,
     external_entry_points: [...entryByName.values()].map(({ name, reason, source }) => ({ id: name, reason, source })),
     invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid, ...entryInvalid],
   };
 
-  const warnings = [];
+  for (const f of ran.findings) f.source = f.source || catalog.source;
+  const warnings = [...(catalog.notes || [])];
   const risky = catalog.unparsed.filter((u) => u.risky);
   if (catalog.source === 'migrations' && risky.length) {
     warnings.push(`${risky.length} migration statement(s) the parser did not apply contain GRANT, REVOKE or DROP POLICY `
@@ -215,6 +220,7 @@ export async function analyze(root, opts = {}) {
     generated_at: new Date().toISOString(),
     root: path.basename(root),
     source: catalog.source,
+    ...(catalog.meta ? { database: catalog.meta } : {}),
     warnings,
     stats,
     rules: ran.rules,
