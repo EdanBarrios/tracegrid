@@ -38,6 +38,10 @@ export function renderReport(r) {
     for (const f of r.suppressed) L.push(`- \`${f.fingerprint}\`: ${esc(f.suppressed)}`);
     L.push('');
   }
+  const ext = r.info.external_entry_points || [];
+  L.push(`## External entry points (${ext.length})`, '', 'Edge functions treated as called from outside the codebase, so they are not reported as uncalled. Check the reasons still hold.', '');
+  for (const e of ext) L.push(`- \`${e.id}\`: ${esc(e.reason)} (${esc(e.source)})`);
+  L.push('');
   L.push(`## Storage buckets referenced (${r.info.storage_buckets.length})`, '');
   for (const b of r.info.storage_buckets) L.push(`- \`${b.id}\`: ${b.sites} site(s), first at \`${b.at}\``);
   L.push('');

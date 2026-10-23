@@ -7,11 +7,11 @@ export function renderHtml(r) {
 <title>supareach: ${escapeHtml(r.root)}</title>
 <style>
 :root{--bg:#fbfbfa;--fg:#1c1c1c;--muted:#6b6b6b;--panel:#ffffff;--line:#d9d9d6;--edge:rgba(60,60,60,.18);--hi:#d9480f;
---table:#2f7d32;--view:#5c9e5f;--function:#1f5fbf;--edge_function:#8a3ffc;--file:#9a9a9a;--bucket:#b7791f;--cron:#c2185b;--bad:#e03131}
+--table:#2f7d32;--view:#5c9e5f;--function:#1f5fbf;--edge_function:#8a3ffc;--file:#9a9a9a;--bucket:#b7791f;--cron:#c2185b;--external:#0b7285;--bad:#e03131}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#141414;--fg:#e8e8e6;--muted:#9a9a98;--panel:#1d1d1d;--line:#333;--edge:rgba(220,220,220,.14);--hi:#ff8a3d;
---table:#5fbf63;--view:#8fcf91;--function:#6ea8ff;--edge_function:#b38bff;--file:#777;--bucket:#e0a84a;--cron:#f06292;--bad:#ff6b6b}}
+--table:#5fbf63;--view:#8fcf91;--function:#6ea8ff;--edge_function:#b38bff;--file:#777;--bucket:#e0a84a;--cron:#f06292;--external:#3bc9db;--bad:#ff6b6b}}
 :root[data-theme=dark]{--bg:#141414;--fg:#e8e8e6;--muted:#9a9a98;--panel:#1d1d1d;--line:#333;--edge:rgba(220,220,220,.14);--hi:#ff8a3d;
---table:#5fbf63;--view:#8fcf91;--function:#6ea8ff;--edge_function:#b38bff;--file:#777;--bucket:#e0a84a;--cron:#f06292;--bad:#ff6b6b}
+--table:#5fbf63;--view:#8fcf91;--function:#6ea8ff;--edge_function:#b38bff;--file:#777;--bucket:#e0a84a;--cron:#f06292;--external:#3bc9db;--bad:#ff6b6b}
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
 #app{display:flex;height:100%}#side{width:340px;max-width:45vw;border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
 #side header{padding:12px;border-bottom:1px solid var(--line)}#side h1{font-size:14px;margin:0 0 8px}
@@ -31,7 +31,7 @@ a.n{color:var(--fg);text-decoration:underline dotted;cursor:pointer}.muted{color
 (function(){
 const D=JSON.parse(document.getElementById('data').textContent);
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const TYPES=['table','view','function','edge_function','cron','bucket','file'];
+const TYPES=['table','view','function','edge_function','cron','bucket','external','file'];
 const byId=new Map();D.nodes.forEach((n,i)=>{n.i=i;n.deg=0;n.x=Math.cos(i)*300*Math.random();n.y=Math.sin(i)*300*Math.random();n.vx=0;n.vy=0;byId.set(n.id,n)});
 const flagged=new Map();for(const it of D.findings){if(it.node&&byId.has(it.node))flagged.set(it.node,it.rule)}
 const E=D.edges.filter(e=>byId.has(e.source)&&byId.has(e.target)).map(e=>({...e,s:byId.get(e.source),t:byId.get(e.target)}));
@@ -93,7 +93,7 @@ for(const it of items.slice(0,200)){h+='<li>'+(it.node&&byId.has(it.node)?link(i
 info.innerHTML=h;return}
 const n=sel;let h='<h2>'+esc(n.label)+'</h2><div class=muted>'+esc(n.type)+(n.at?' · '+esc(n.at):'')+'</div>';
 if(flagged.has(n.id))h+='<p class=bad>Finding: '+esc(flagged.get(n.id))+'</p>';if(n.missing)h+='<p class=bad>Not defined in migrations / functions dir.</p>';
-const attrs=['rls','policies','securityDefiner','anon','authenticated','returns','verifyJwt','schedule','securityInvoker','overloads'].filter(a=>n[a]!==undefined&&n[a]!==null);
+const attrs=['rls','policies','securityDefiner','anon','authenticated','returns','verifyJwt','entryPoint','schedule','securityInvoker','overloads'].filter(a=>n[a]!==undefined&&n[a]!==null);
 if(attrs.length)h+='<ul>'+attrs.map(a=>'<li>'+a+': '+esc(n[a])+'</li>').join('')+'</ul>';
 const out=adj.get(n.id).filter(e=>e.source===n.id),inn=adj.get(n.id).filter(e=>e.target===n.id);
 const row=(e,o)=>'<li>'+link(o)+' <span class=muted>'+esc(e.kind)+(e.ops.length?' '+esc(e.ops.join(',')):'')+(e.confidence==='inferred'?' (inferred)':'')+'</span><br><span class=muted>'+e.at.slice(0,5).map(esc).join('<br>')+'</span></li>';

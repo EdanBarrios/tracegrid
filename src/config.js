@@ -21,6 +21,11 @@ export const DEFAULTS = {
   // Supabase grants EXECUTE on new public functions to anon and authenticated by default
   // (on top of Postgres' default EXECUTE to PUBLIC). Set false for a vanilla Postgres model.
   supabaseDefaultGrants: true,
+  // Edge functions called from outside the codebase (webhooks, OAuth callbacks, auth hooks,
+  // health checks): [{ "name": "stripe-webhook", "reason": "Stripe calls it" }].
+  entryPoints: [],
+  // Treat `verify_jwt = false` in supabase/config.toml as an external entry point (reported as such).
+  autoEntryPoints: true,
   // Every ignore needs a reason: { "name": "...", "reason": "..." }; `findings` takes a full
   // fingerprint ("<rule>:<subject>") and works for any rule, plugins included.
   ignore: { functions: [], edgeFunctions: [], tables: [], rpcs: [], findings: [] },
@@ -59,6 +64,12 @@ export function validateConfig(c, file = 'config') {
     });
   }
   if (!Array.isArray(c.plugins)) bad('plugins must be an array of paths');
+  if (!Array.isArray(c.entryPoints)) bad('entryPoints must be an array');
+  c.entryPoints.forEach((x, i) => {
+    if (typeof x === 'string') bad(`entryPoints[${i}] is a bare string; write { "name": ${JSON.stringify(x)}, "reason": "who calls it" }`);
+    if (!x || typeof x.name !== 'string' || !x.name) bad(`entryPoints[${i}] needs "name"`);
+    if (typeof x.reason !== 'string' || !x.reason.trim()) bad(`entryPoints[${i}] (${x.name}) needs a non-empty "reason"`);
+  });
 }
 
 /** Convert a glob (supports **, *, ?, {a,b}) to a RegExp over forward-slash paths. */

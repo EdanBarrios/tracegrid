@@ -83,6 +83,31 @@ export async function analyze(root, opts = {}) {
     });
   }
   for (const e of edgeFns) node(`edge:${e.name}`, 'edge_function', e.name, { verifyJwt: e.verifyJwt, at: e.dir });
+  // External entry points: config, `// supareach: entry-point <reason>` hatches, verify_jwt = false.
+  const entries = [];
+  const entryInvalid = [];
+  for (const ep of cfg.entryPoints) {
+    if (edgeNames.has(ep.name)) entries.push({ name: ep.name, reason: ep.reason, source: 'config', confidence: 'extracted' });
+    else entryInvalid.push({ file: 'config', line: 0, error: `entryPoints: no edge function named ${ep.name}` });
+  }
+  for (const [file, hs] of code.hatches.byFile) {
+    for (const h of hs.filter((x) => x.directive === 'entry-point' && !x.error)) {
+      const dir = file.startsWith(fnPrefix) ? file.slice(fnPrefix.length).split('/')[0] : null;
+      if (dir && edgeNames.has(dir)) entries.push({ name: dir, reason: h.reason, source: `hatch ${file}:${h.line}`, confidence: 'extracted' });
+      else entryInvalid.push({ file, line: h.line, error: 'entry-point: only valid inside an edge function directory' });
+    }
+  }
+  if (cfg.autoEntryPoints) {
+    for (const e of edgeFns) if (e.verifyJwt === false) entries.push({ name: e.name, reason: 'verify_jwt = false in supabase/config.toml: assumed to be called from outside (webhook, callback, health check)', source: 'supabase/config.toml', confidence: 'inferred' });
+  }
+  const entryByName = new Map();
+  for (const ep of entries) if (!entryByName.has(ep.name)) entryByName.set(ep.name, ep);
+  if (entryByName.size) node('external:http', 'external', 'outside callers (webhooks, callbacks, hooks)');
+  for (const ep of entryByName.values()) {
+    node(`edge:${ep.name}`, 'edge_function', ep.name, { entryPoint: ep.reason });
+    edge('external:http', `edge:${ep.name}`, 'entry-point', ep.confidence, ep.source);
+  }
+
   for (const c of sql.cron.values()) node(`cron:${c.name}`, 'cron', c.name, { schedule: c.schedule, at: `${c.file}:${c.line}` });
 
   // Code edges
@@ -149,7 +174,8 @@ export async function analyze(root, opts = {}) {
     unresolved_dynamic_calls: code.unresolved,
     unparsed_sql: sql.unparsed,
     unreadable_files: code.failed,
-    invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid],
+    external_entry_points: [...entryByName.values()].map(({ name, reason, source }) => ({ id: name, reason, source })),
+    invalid_hatches: [...code.hatches.invalid, ...sql.hatches.invalid, ...entryInvalid],
   };
 
   const stats = {

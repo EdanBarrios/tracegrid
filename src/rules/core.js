@@ -76,10 +76,10 @@ export const coreRules = [
     id: 'uncalled-edge-function',
     level: 'warning',
     title: 'Edge functions with no caller',
-    why: 'No `functions.invoke`, no `/functions/v1/<name>` URL in code, cron or SQL. Webhooks and auth hooks are legitimately uncalled: declare them as entry points.',
+    why: 'No `functions.invoke`, no `/functions/v1/<name>` URL in code, cron or SQL, and not declared as an external entry point. Webhooks, OAuth callbacks and auth hooks are legitimately uncalled: declare them in `entryPoints` or with a `// supareach: entry-point <reason>` hatch. `verify_jwt = false` functions are treated as entry points automatically (`autoEntryPoints`).',
     run({ graph }) {
       return graph.nodes.filter((n) => n.type === 'edge_function' && !n.missing && callers(graph, n.id).length === 0)
-        .map((n) => ({ id: n.label, node: n.id, at: n.at, note: n.verifyJwt === false ? 'verify_jwt=false: possibly a webhook or public endpoint' : undefined }));
+        .map((n) => ({ id: n.label, node: n.id, at: n.at, note: n.verifyJwt === false ? 'verify_jwt=false (autoEntryPoints is off)' : undefined }));
     },
   },
   {

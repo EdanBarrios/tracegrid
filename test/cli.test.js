@@ -18,9 +18,10 @@ test('demo app findings', async () => {
   assert.deepEqual(ids('client-table-without-rls'), ['audit_log']);
   assert.deepEqual(ids('client-table-without-policies'), ['invoices']);
   assert.deepEqual(ids('missing-rpc'), ['delete_everything']);
-  assert.deepEqual(ids('uncalled-edge-function'), ['export-csv']); // payment-webhook ignored by config
+  assert.deepEqual(ids('uncalled-edge-function'), ['export-csv']); // payment-webhook: verify_jwt = false
   assert.deepEqual(ids('unknown-table'), []);
-  assert.deepEqual(r.suppressed.map((f) => f.fingerprint), ['uncalled-edge-function:payment-webhook']);
+  assert.deepEqual(r.info.external_entry_points.map((e) => [e.id, e.source]), [['payment-webhook', 'supabase/config.toml']]);
+  assert.ok(r.edges.some((x) => x.source === 'external:http' && x.target === 'edge:payment-webhook' && x.kind === 'entry-point'));
   assert.ok(r.findings.every((f) => f.fingerprint === `${f.rule}:${f.id}` && f.level));
   assert.deepEqual(r.info.storage_buckets.map((b) => b.id).sort(), ['avatars', 'invoice-pdfs']);
   assert.equal(r.info.unresolved_dynamic_calls.length, 1);
@@ -72,6 +73,25 @@ test('CLI writes outputs; --check gates on fingerprints, not counts', () => {
   r = run(demo, '--no-output', '--baseline', path.join(tmp, 'old.json'), '--check');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /expected \{ "findings"/);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('entry points: config with reason, hatch, and autoEntryPoints off', async () => {
+  const { loadConfig } = await import('../src/config.js');
+  const base = loadConfig(demo);
+  let r = await analyze(demo, { config: { ...base, autoEntryPoints: false, entryPoints: [{ name: 'export-csv', reason: 'downloaded by the ops team by URL' }, { name: 'nope', reason: 'x' }] } });
+  const ids = (k) => r.findings.filter((f) => f.rule === k).map((f) => f.id).sort();
+  assert.deepEqual(ids('uncalled-edge-function'), ['payment-webhook']);
+  assert.deepEqual(r.info.external_entry_points.map((e) => e.id), ['export-csv']);
+  assert.match(r.info.invalid_hatches.map((h) => h.error).join(), /no edge function named nope/);
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'supareach-'));
+  fs.cpSync(demo, tmp, { recursive: true });
+  const idx = path.join(tmp, 'supabase/functions/export-csv/index.ts');
+  fs.writeFileSync(idx, '// supareach: entry-point linked from the admin email\n' + fs.readFileSync(idx, 'utf8'));
+  r = await analyze(tmp);
+  assert.deepEqual(r.findings.filter((f) => f.rule === 'uncalled-edge-function').map((f) => f.id), []);
+  assert.match(r.info.external_entry_points.find((e) => e.id === 'export-csv').source, /^hatch supabase\/functions\/export-csv\/index.ts:1$/);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
