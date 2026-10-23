@@ -77,6 +77,22 @@ export async function analyze(root, opts = {}) {
   }
   const sql = scanMigrations(path.join(root, project.migrations), { supabaseDefaultGrants: model, relDir: project.migrations, root });
   const replayed = fromMigrations(sql);
+  // Under the legacy model, replay again as opt-in: privileges a table holds only under legacy came
+  // from Supabase's default grants, so a table recreated after 2026-10-30 would lose them.
+  const optInGrants = new Map();
+  if (model === 'legacy' && !opts.dbUrl) {
+    const alt = fromMigrations(scanMigrations(path.join(root, project.migrations), { supabaseDefaultGrants: 'opt-in', relDir: project.migrations, root }));
+    for (const t of [...alt.tables, ...alt.views]) if (t.grants) optInGrants.set(t.name, t.grants);
+  }
+  /** Client privileges that exist only because of the legacy default grants. */
+  const defaultOnly = (name, g) => {
+    if (!g || !optInGrants.has(name)) return undefined;
+    const o = optInGrants.get(name);
+    const lost = [...new Set(['anon', 'authenticated'].flatMap((r) => (g[r] || []).filter((p) => !(o[r] || []).includes(p))))].sort();
+    return lost.length ? lost : undefined;
+  };
+  /** Per-role client privileges, for the dashboard reach matrix. */
+  const byRole = (g) => (g ? { anon: [...(g.anon || [])].sort(), authenticated: [...(g.authenticated || [])].sort() } : undefined);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
   const catalog = opts.dbUrl ? fromDb(readCatalog(opts.dbUrl, opts.dbExec ? { exec: opts.dbExec, root } : { root }), replayed) : replayed;
   const edgeFns = listEdgeFunctions(root, project.functionsDir, project.toml, project.supabaseDir);
@@ -120,7 +136,7 @@ export async function analyze(root, opts = {}) {
     const permissive = t.policies.filter((p) => p.permissive !== false && (p.roles || ['public']).some((r) => clientRoles.has(r))).length;
     node(`table:${t.name}`, 'table', t.name, {
       schema: t.schema, rls: t.rls, policies: t.policies.length, clientPolicies: permissive, defined: !t.external, at: t.at,
-      ...(t.grants !== undefined ? { clientPrivs: clientPrivs(t.grants) } : {}),
+      ...(t.grants !== undefined ? { clientPrivs: clientPrivs(t.grants), privsByRole: byRole(t.grants), defaultGrants: defaultOnly(t.name, t.grants) } : {}),
       ...(t.partition ? { partition: true } : {}), ...(t.rlsUncertain ? { rlsUncertain: t.rlsUncertain } : {}), ...(t.grantsUncertain ? { grantsUncertain: t.grantsUncertain } : {}),
     });
   }
@@ -129,7 +145,7 @@ export async function analyze(root, opts = {}) {
     // Tables the view reads that have RLS: an owner-rights view returns their rows without it.
     const reads = [...rlsTables.keys()].filter((name) => new RegExp(String.raw`(^|[^\w$."])` + (name.includes('.') ? '' : String.raw`(?:public\s*\.\s*)?`) + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + String.raw`(?![\w$])`, 'i').test(v.text || ''));
     node(`table:${v.name}`, 'view', v.name, { schema: v.schema, securityInvoker: v.securityInvoker, materialized: v.materialized || undefined, readsRls: reads.length ? reads : undefined, at: v.at,
-      ...(v.grants !== undefined ? { clientPrivs: clientPrivs(v.grants) } : {}), ...(v.grantsUncertain ? { grantsUncertain: v.grantsUncertain } : {}) });
+      ...(v.grants !== undefined ? { clientPrivs: clientPrivs(v.grants), privsByRole: byRole(v.grants), defaultGrants: defaultOnly(v.name, v.grants) } : {}), ...(v.grantsUncertain ? { grantsUncertain: v.grantsUncertain } : {}) });
   }
   const fnIdsByName = new Map();
   for (const f of catalog.functions) {

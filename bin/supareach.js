@@ -113,12 +113,18 @@ async function main() {
     throw e;
   }
 
+  const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
   if (args.output) {
+    // The page shows new / fixed findings against the baseline when one is readable (display only).
+    let baseline = null;
+    if (fs.existsSync(baselinePath)) {
+      try { const c = compareBaseline(readBaseline(baselinePath), r, 'review'); baseline = { file: path.basename(baselinePath), fresh: c.fresh.map((f) => f.fingerprint), fixed: c.fixed }; } catch { baseline = null; }
+    }
     const out = path.resolve(args.out);
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(path.join(out, 'graph.json'), JSON.stringify(r, null, 1));
     fs.writeFileSync(path.join(out, 'report.md'), renderReport(r));
-    fs.writeFileSync(path.join(out, 'graph.html'), renderHtml(r));
+    fs.writeFileSync(path.join(out, 'graph.html'), renderHtml(r, { baseline }));
     const rel = path.relative(process.cwd(), out);
     console.log(`Wrote ${rel && !rel.startsWith('..') ? rel : out}/{graph.json,report.md,graph.html}`);
   }
@@ -166,7 +172,6 @@ async function main() {
   }
   let fresh = null;
 
-  const baselinePath = path.resolve(args.baseline || path.join(root, 'supareach.baseline.json'));
   let code = 0;
   if (args.update) {
     let prev = null;
