@@ -13,7 +13,7 @@
 
 </div>
 
-Static, offline, no AI, no telemetry. v0.x, best effort: read [Limitations](#limitations) before acting on a finding.
+Static, offline, no AI, no telemetry. On 20 public Supabase apps, 111 of 113 Fix findings held up when checked by hand ([benchmarks](BENCHMARKS.md)). v0.x, best effort: read [Limitations](#limitations) before acting on a finding.
 
 ## What it finds
 
@@ -78,6 +78,6 @@ claude plugin install tracegrid@tracegrid
 - `edge-service-role-before-auth` is a heuristic.
 - Catalog mode (`--db-url`) is tested on macOS and Linux; on Windows it needs psql.exe on PATH.
 
-[Docs](docs/README.md) · [Configuration](docs/configuration.md) · [Rules](docs/rules.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
+[Docs](docs/README.md) · [Configuration](docs/configuration.md) · [Rules](docs/rules.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Benchmarks](BENCHMARKS.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
 Not affiliated with Supabase. MIT © Edan Barrios.

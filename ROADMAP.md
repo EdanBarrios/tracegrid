@@ -5,8 +5,8 @@ from here) matters to you.
 
 ## Next
 
-- **Benchmarks.** `BENCHMARKS.md`: findings, false-positive rate and run time on 10-20 public
-  Supabase repositories.
+- **Benchmarks.** Name the repositories in [BENCHMARKS.md](BENCHMARKS.md) and extend it to
+  Review-tier precision.
 - **`explain <name>`.** Every path to one table, RPC, edge function or bucket, from the
   command line.
 - **`--fix=print`.** Print draft revoke / `security_invoker` migrations for Fix findings;
