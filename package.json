@@ -4,7 +4,7 @@
   "description": "Map how your app code reaches your Supabase schema: tables, RPCs, edge functions, storage, grants and RLS. Static, offline, no AI.",
   "type": "module",
   "bin": { "supareach": "bin/supareach.js" },
-  "files": ["bin", "src", "README.md", "LICENSE"],
+  "files": ["bin", "src", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md"],
   "engines": { "node": ">=18" },
   "scripts": {
     "test": "node --test test/*.test.js",

@@ -113,7 +113,7 @@ export async function analyze(root, opts = {}) {
   }
   const entryByName = new Map();
   for (const ep of entries) if (!entryByName.has(ep.name)) entryByName.set(ep.name, ep);
-  if (entryByName.size) node('external:http', 'external', 'outside callers (webhooks, callbacks, hooks)');
+  if (entryByName.size) node('external:http', 'external', 'external callers');
   for (const ep of entryByName.values()) {
     node(`edge:${ep.name}`, 'edge_function', ep.name, { entryPoint: ep.reason });
     edge('external:http', `edge:${ep.name}`, 'entry-point', ep.confidence, ep.source);
