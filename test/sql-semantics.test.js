@@ -384,3 +384,19 @@ test('S2-21 / S2-22 catalog mode checks schema USAGE and reads SQL-standard bodi
   assert.match(CATALOG_SQL, /pg_default_acl/);
   assert.match(CATALOG_SQL, /pg_get_triggerdef/);
 });
+
+test('auto grant model: legacy replay plus a notice when config.toml is silent; explicit settings win', async () => {
+  const sql = `create table public.a (id int); alter table public.a enable row level security; create policy p on public.a for select to authenticated using (true);`;
+  const r = await run(sql, { code: from('a') });
+  assert.equal(r.project.grantModel.model, 'legacy');
+  assert.match(r.project.grantModel.source, /^auto/);
+  assert.equal(r.notices.length, 1);
+  assert.match(r.notices[0], /2026-10-30/);
+  assert.ok(!r.findings.some((f) => f.rule === 'client-table-not-granted'));
+  const t = await run(sql, { code: { ...from('a'), 'supabase/config.toml': '[api]\nauto_expose_new_tables = true\n' } });
+  assert.equal(t.notices.length, 0);
+  const o = await run(sql, { code: from('a'), config: { supabaseDefaultGrants: 'opt-in' } });
+  assert.equal(o.notices.length, 0);
+  const f = o.findings.find((x) => x.rule === 'client-table-not-granted');
+  assert.ok(f && /opt-in/.test(f.note));
+});

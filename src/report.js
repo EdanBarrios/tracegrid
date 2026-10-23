@@ -18,6 +18,7 @@ export function renderReport(r) {
     L.push(`Supabase project: ${code(r.project.supabaseDir)} (${esc(r.project.how)}). Default-grant model: **${esc(g.model)}** (${esc(g.source)}).`
       + (g.live ? ` Live database: tables ${esc(g.live.tables)}; functions ${esc(g.live.functions)}.` : ''), '');
   }
+  for (const n of r.notices || []) L.push(`> **Note:** ${esc(n)}`, '');
   L.push('## Summary', '', '| Finding | Count |', '|---|---|');
   for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`, ${rule.level}) | ${r.counts[rule.id]} |`);
   L.push(`| Storage buckets referenced (info) | ${r.info.storage_buckets.length} |`);

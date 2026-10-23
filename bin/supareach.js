@@ -136,6 +136,7 @@ async function main() {
     for (const f of top.slice(0, 10)) say(`  ${f.level.padEnd(7)} ${f.rule}  ${f.id}${f.at ? `  ${f.at}` : ''}${f.note ? `  (${f.note})` : ''}`);
     if (top.length > 10) say(`  ... and ${top.length - 10} more in report.md`);
   }
+  for (const n of r.notices || []) say(`note: ${n}`);
   for (const w of r.warnings) warn(`warning: ${w}`);
   for (const h of r.info.invalid_hatches) warn(`warning: ignored hatch at ${h.file}:${h.line}: ${h.error}`);
 

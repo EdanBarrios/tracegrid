@@ -9,6 +9,17 @@ A correctness and safety release driven by five red-team reviews (security, SQL 
 code extraction, nine real repositories, launch readiness). Findings changed for most
 projects: re-run `--update-baseline` after reviewing them.
 
+### Default grants (decision)
+- `supabaseDefaultGrants` now defaults to `"auto"`. Supabase CLI v2.106.0 treats an unset
+  `[api] auto_expose_new_tables` as false and the key is removed on 2026-10-30, so neither
+  model is safe to assume silently. `"auto"` uses the config.toml value when it is set;
+  otherwise it replays migrations under the legacy defaults, because an existing project's
+  tables already got those grants and replay of explicit GRANT / REVOKE / ALTER DEFAULT
+  PRIVILEGES is applied on top either way, and it prints a notice (console, `report.md`,
+  `graph.json#notices`) that tables added after 2026-10-30 need an explicit GRANT. Pick
+  `"legacy"` or `"opt-in"` to silence it; `--db-url` reads the real ACLs.
+- `client-table-not-granted` explains the opt-in model and is a review item, not an exposure.
+
 ### Security
 - Plugins load only with `--allow-plugins`, which is refused on GitHub `pull_request` /
   `pull_request_target` events; `--no-plugins` skips them. Plugin paths must be inside the

@@ -12,6 +12,10 @@ import { loadPlugins, runRules, makeGraph, RuleError } from './engine.js';
 
 export const SCHEMA_VERSION = 1;
 
+export const GRANT_NOTICE = 'Grants: assuming the legacy Supabase defaults (new tables and functions in public granted to anon/authenticated) for the replayed migrations. '
+  + 'From 2026-10-30 Supabase no longer exposes new tables to the Data API automatically (CLI v2.106.0 already treats an unset [api] auto_expose_new_tables as false): '
+  + 'tables added after that need an explicit GRANT in a migration. Set supabaseDefaultGrants to "legacy" or "opt-in" to choose, or use --db-url for the real ACLs.';
+
 /** Config ignore list that applies to each core rule. */
 const IGNORE_CATEGORY = {
   'exposed-uncalled-function': 'functions', 'granted-helper-function': 'functions',
@@ -55,10 +59,21 @@ export async function analyze(root, opts = {}) {
   const project = resolveProject(root, cfg);
   const files = findFiles(root, cfg.include, cfg.exclude, { outputDirs: cfg.outputDirs || [] });
   const code = scanFiles(root, files, cfg.wrappers);
-  // Grant model: config, else config.toml [api] auto_expose_new_tables, else legacy (the conservative choice).
+  // Grant model. "auto" (the default): config.toml [api] auto_expose_new_tables when set, else legacy
+  // for the replayed migrations plus a notice. Supabase CLI v2.106.0 treats an unset key as false and
+  // the key is removed on 2026-10-30, after which new tables need explicit grants; projects that
+  // already exist keep the grants their tables got, which is what replaying under legacy models.
   const tomlExpose = project.toml && project.toml.api && typeof project.toml.api.auto_expose_new_tables === 'boolean' ? project.toml.api.auto_expose_new_tables : null;
-  const model = grantModel(cfg.supabaseDefaultGrants != null ? cfg.supabaseDefaultGrants : tomlExpose === false ? 'opt-in' : 'legacy');
-  const modelSource = cfg.supabaseDefaultGrants != null ? 'config' : tomlExpose != null ? `${project.configToml} [api] auto_expose_new_tables` : 'default';
+  const setting = cfg.supabaseDefaultGrants == null ? 'auto' : cfg.supabaseDefaultGrants;
+  const notices = [];
+  let model;
+  let modelSource;
+  if (setting !== 'auto') { model = grantModel(setting); modelSource = 'config'; } else if (tomlExpose != null) {
+    model = grantModel(tomlExpose ? 'legacy' : 'opt-in'); modelSource = `${project.configToml} [api] auto_expose_new_tables`;
+  } else {
+    model = 'legacy'; modelSource = 'auto (config.toml does not set [api] auto_expose_new_tables)';
+    if (!opts.dbUrl) notices.push(GRANT_NOTICE);
+  }
   const sql = scanMigrations(path.join(root, project.migrations), { supabaseDefaultGrants: model, relDir: project.migrations, root });
   const replayed = fromMigrations(sql);
   // Catalog wins over migration replay when a database is given; migrations still supply file:line.
@@ -281,7 +296,7 @@ export async function analyze(root, opts = {}) {
   // Findings
   const graph = makeGraph([...nodes.values()], [...edges.values()]);
   const suppress = makeSuppressor(cfg, [...code.hatches.suppress, ...sql.hatches.suppress]);
-  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root, unresolved: code.unresolved, hooks }, suppress);
+  const ran = runRules([...coreRules, ...plugins], { graph, catalog, config: cfg, root, unresolved: code.unresolved, hooks, grantModel: catalog.source === 'migrations' ? model : 'catalog' }, suppress);
 
   const info = {
     storage_buckets: [...buckets.entries()].map(([id, at]) => ({ id, sites: at.length, at: at[0] })),
@@ -337,6 +352,7 @@ export async function analyze(root, opts = {}) {
     source: catalog.source,
     project: { grantModel: { model: model || 'vanilla', source: modelSource, ...(catalog.meta && catalog.meta.default_grants ? { live: catalog.meta.default_grants } : {}) }, supabaseDir: project.supabaseDir, how: project.how, migrations: project.migrations, functionsDir: project.functionsDir, configToml: project.toml ? project.configToml : null, codeRoots: codeRoots(files) },
     scope_problems,
+    notices,
     ...(catalog.meta ? { database: catalog.meta } : {}),
     warnings,
     stats,

@@ -63,10 +63,15 @@ and may carry a `note` or `confidence: low`.
   blocks when its text is fully known. Statements it skips are listed; if any touch grants,
   policies or RLS it warns that grant-based findings may be wrong.
 - **Default grants.** Supabase historically granted new tables and functions in `public` to
-  anon/authenticated/service_role (per schema); from 2026 new tables are not exposed by
-  default. `supabaseDefaultGrants` is `"legacy"`, `"opt-in"` or `false` (vanilla Postgres).
-  By default it reads `[api] auto_expose_new_tables` from config.toml, else assumes `legacy`,
-  the choice that reports more rather than less. Catalog mode prints the live model.
+  anon/authenticated/service_role (per schema). From 2026-10-30 new tables are not exposed to
+  the Data API by default, and Supabase CLI v2.106.0 already treats an unset
+  `[api] auto_expose_new_tables` as false. `supabaseDefaultGrants` is `"auto"` (default),
+  `"legacy"`, `"opt-in"` or `false` (vanilla Postgres). `"auto"` uses
+  `auto_expose_new_tables` from config.toml when it is set; when it is not, it does not guess
+  silently: it replays the migrations under the legacy defaults (an existing project's tables
+  keep the grants they already got) and prints a one-line notice that tables added after
+  2026-10-30 need an explicit GRANT. Explicit grants, revokes and `ALTER DEFAULT PRIVILEGES`
+  in migrations always apply on top. Catalog mode reads the real ACLs and prints the live model.
 - **Live catalog (`--db-url`).** Reads `pg_proc` with `has_function_privilege` (and schema
   `USAGE`), table privileges, RLS, policies, triggers, indexes, `pg_default_acl`, `cron.job`
   and `storage.buckets` through `psql` inside a read-only transaction ending in `ROLLBACK`. The
@@ -117,7 +122,7 @@ dropped**. A `// supareach: names a,b` comment above the call or its wrapper res
   "include": ["**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro}"],
   "exclude": ["**/*.{test,spec}.{ts,tsx,js,jsx}", "**/__mocks__/**", "**/*.stories.*", "**/*.d.ts"],
   "exposedSchemas": ["public"],
-  "supabaseDefaultGrants": "legacy",
+  "supabaseDefaultGrants": "auto",
   "wrappers": { "rpc": ["callRpc", { "name": "rpcWithRetry", "arg": 1 }], "from": [], "invoke": [] },
   "entryPoints": [{ "name": "stripe-webhook", "reason": "Stripe calls it" }],
   "autoEntryPoints": true,

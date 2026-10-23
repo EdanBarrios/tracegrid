@@ -96,11 +96,13 @@ export const coreRules = [
     id: 'client-table-not-granted',
     level: 'warning',
     title: 'Client-touched tables that anon and authenticated have no privileges on',
-    why: 'App code queries these, but neither anon nor authenticated holds SELECT, INSERT, UPDATE or DELETE on them, so the calls fail with "permission denied". Expected for tables created after Supabase stopped granting new tables to the Data API by default: add an explicit GRANT (with RLS) if the client should reach it.',
-    run({ graph }) {
+    why: 'App code queries these, but neither anon nor authenticated holds SELECT, INSERT, UPDATE or DELETE on them (table or column level), so the calls fail with "permission denied". This is the expected state for tables created after Supabase stopped exposing new tables to the Data API by default (2026-10-30; CLI v2.106.0 with `[api] auto_expose_new_tables` unset): add an explicit GRANT (with RLS) in a migration if the client should reach it. A functional break, not an exposure, so it is a review item.',
+    run({ graph, grantModel }) {
       return [...clientTables(graph)].map(([id, at]) => ({ n: graph.node(id), at }))
         .filter(({ n }) => n && (n.type === 'table' || n.type === 'view') && !n.missing && Array.isArray(n.clientPrivs) && !n.clientPrivs.length)
-        .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites }));
+        .map(({ n, at }) => ({ id: n.label, node: n.id, at: at.at[0], sites: at.sites,
+          ...(grantModel === 'opt-in' ? { note: 'opt-in grant model: no table is granted to anon/authenticated until a migration does' } : {}),
+          ...(n.grantsUncertain ? { confidence: 'low', note: `low confidence: dynamic SQL at ${n.grantsUncertain} may grant it` } : {}) }));
     },
   },
   {
