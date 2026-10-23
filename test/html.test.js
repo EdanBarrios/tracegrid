@@ -83,3 +83,23 @@ test('graph.html from the demo: findings carry tiers and the page lists Fix firs
   assert.ok(g.findings.every((f) => f.tier && !f.fingerprint.includes(f.tier + ':')), 'tier is not part of the fingerprint');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
+
+test('graph.html: dashboard by default, arrowed and labelled edges, and the look in one THEME block', () => {
+  const h = renderHtml(hostile(), { baseline: { file: 'supareach.baseline.json', fresh: ['r:a'], fixed: ['r:b', 'r:c'] } });
+  const { json, code } = scripts(h);
+  const d = JSON.parse(json);
+  assert.deepEqual(d.baseline, { file: 'supareach.baseline.json', fresh: 1, fixed: 2 });
+  assert.equal(typeof d.coverage.partial, 'number');
+  assert.match(h, /data-view="dash" class="on">Dashboard/);
+  assert.match(h, /<marker id="ar"[^>]*orient="auto"/);
+  const css = /<style>([\s\S]*?)<\/style>/.exec(h)[1];
+  const theme = css.slice(css.indexOf('THEME'), css.indexOf('end THEME'));
+  for (const v of ['--font', '--edge', '--edge-w', '--arrow', '--fix', '--review', '--info', '--radius', '--box-w', '--3d-bg', '--3d-node']) assert.ok(theme.includes(v + ':'), v);
+  assert.doesNotMatch(css.slice(css.indexOf('end THEME')), /#[0-9a-f]{3,6}\b/i, 'no colour outside the THEME block');
+  assert.doesNotMatch(code, /'#[0-9a-f]{3,8}'/i, 'the script reads colours from THEME');
+  for (const p of ['Exposure', 'Reach matrix', 'Biggest holes', 'Findings by rule', 'Top folders by database touchpoints', 'Supabase 2026-10-30 change', 'Coverage']) assert.ok(code.includes(p), p);
+  assert.match(code, /'marker-end':'url\(#'/);
+  for (const w of ["'calls'", "'invokes'", "'policy uses'", "'triggers'", "'EXECUTE'"]) assert.ok(code.includes(w), w);
+  assert.match(code, /linkDirectionalArrowLength/);
+  assert.match(code, /nodeThreeObject/);
+});

@@ -23,6 +23,15 @@ projects: re-run `--update-baseline` after reviewing them.
 - New `graph.html`: findings sidebar by tier with search and filters; a path view (Code |
   Entry points | Database | Roles) for the selected finding; a full map with collapsed groups;
   an optional 3D showcase that lazy-loads a pinned library from jsDelivr with SRI.
+- `graph.html` opens on a dashboard: exposure score, Fix / Review / Info and new / fixed since
+  the baseline, a role x surface reach matrix (click a cell to filter), the five biggest holes as
+  one-line paths, findings by rule, top folders by database touchpoints, tables that rely on the
+  legacy default grants (2026-10-30), and scan coverage. Every edge has an arrowhead, is at least
+  1.5px at 3:1 contrast, is dashed only when inferred or ambiguous, carries its relation in the
+  path view and is routed around the boxes it would cross. Schematic look: node kinds are shapes
+  (2D symbols and 3D geometry), colour is reserved for tiers, and every colour, stroke, radius and
+  font is a variable in one THEME block. Nodes carry `privsByRole` and, under the legacy grant
+  model, `defaultGrants` (privileges that exist only through Supabase's default grants).
 - New review-tier rules: `edge-service-role-before-auth`, `edge-request-controlled-fetch`.
 
 ### Analysis fixes (final pre-launch round)
