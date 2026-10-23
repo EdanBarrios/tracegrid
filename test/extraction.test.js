@@ -358,3 +358,20 @@ test('S1 Nuxt serverSupabaseServiceRole and SERVICE_KEY / SUPABASE_SECRET env na
   assert.ok(r.links.filter((l) => l.relation === 'rpc-service').length >= 2);
   assert.ok(!fp(r).has('exposed-uncalled-function:never_called/0'), 'serverSupabaseClient is a user-scoped client');
 });
+
+test('S2 path aliases from the nearest tsconfig (with extends) and workspace package names', async () => {
+  const r = await run({
+    'apps/web/tsconfig.json': '{ "extends": "./tsconfig.base.json" }',
+    'apps/web/tsconfig.base.json': '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./app/*"], "#names": ["./app/names.ts"] } } }',
+    'apps/web/app/lib/names.ts': `export const T = 'target_fn';`,
+    'apps/web/app/names.ts': `export const O = 'other_fn';`,
+    'apps/web/app/page.ts': `import { T } from '@/lib/names'; import { O } from '#names'; declare const supabase: any; supabase.rpc(T); supabase.rpc(O);`,
+    'packages/db/package.json': '{ "name": "@acme/db", "main": "./src/index.ts" }',
+    'packages/db/src/index.ts': `export const N = 'never_called';`,
+    'packages/db/src/more.ts': `export const F = 'full_name';`,
+    'apps/admin/x.ts': `import { N } from '@acme/db'; import { F } from '@acme/db/more'; declare const supabase: any; supabase.rpc(N); supabase.rpc(F);`,
+    'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+  });
+  for (const n of ['target_fn', 'other_fn', 'never_called']) assert.ok(!uncalled(r).has(n), n);
+  assert.ok(!r.info.unresolved_dynamic_calls.length, JSON.stringify(r.info.unresolved_dynamic_calls));
+});

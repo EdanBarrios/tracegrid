@@ -95,7 +95,9 @@ only, no type checker) it records:
   `/functions/v1/<name>` URLs, including concatenation and `new URL('functions/v1/x', base)`.
 - Names from literals, constants (scope-aware), `let` reassignments, `as const` arrays and
   loops, object maps, enums, concatenation, and constants imported across files (barrels,
-  `@/` / `~/` / `$lib/` and tsconfig `paths`). Partially known names (`'fn_' + x`) link
+  `@/` / `~/` / `$lib/`, `paths` from the nearest tsconfig.json / jsconfig.json above the
+  importing file with one level of `extends`, and workspace packages by their package.json
+  `name`). Partially known names (`'fn_' + x`) link
   ambiguously to every matching function.
 - Wrappers: same-file and exported functions, hooks, class and object methods, and
   destructured parameters that pass a name to a Supabase call; others go in `wrappers`.

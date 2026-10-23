@@ -837,20 +837,119 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
 export const MAX_SOURCE_FILE = 2 * 1024 * 1024;
 const EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.astro'];
 
-/** Path aliases from tsconfig.json / jsconfig.json compilerOptions.paths, plus common defaults. */
-function aliases(root) {
-  const out = [['@/', ['', 'src/']], ['~/', ['', 'src/']], ['$lib/', ['src/lib/']]];
-  for (const f of ['tsconfig.json', 'jsconfig.json']) {
-    let j;
-    try { j = JSON.parse(fs.readFileSync(path.join(root, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|(^|[^:"])\/\/[^\n]*/g, '$1').replace(/,(\s*[}\]])/g, '$1')); } catch { continue; }
-    const co = (j && j.compilerOptions) || {};
-    const base = (co.baseUrl || '.').replace(/^\.\/?/, '').replace(/\/?$/, '/').replace(/^\/$/, '');
-    for (const [k, v] of Object.entries(co.paths || {})) {
-      if (!k.endsWith('/*') || !Array.isArray(v)) continue;
-      out.unshift([k.slice(0, -1), v.filter((x) => typeof x === 'string' && x.endsWith('/*')).map((x) => path.posix.normalize(base + x.slice(0, -1).replace(/^\.\//, '')).replace(/^\.\/?/, ''))]);
+const readJsonc = (file) => {
+  try {
+    const t = fs.readFileSync(file, 'utf8');
+    if (t.length > 1024 * 1024) return null;
+    return JSON.parse(t.replace(/\/\*[\s\S]*?\*\/|(^|[^:"])\/\/[^\n]*/g, '$1').replace(/,(\s*[}\]])/g, '$1'));
+  } catch { return null; }
+};
+const DEFAULT_ALIASES = [['@/', ['', 'src/']], ['~/', ['', 'src/']], ['$lib/', ['src/lib/']]];
+
+/**
+ * Module resolver for import specifiers, without a type checker:
+ * - relative specifiers;
+ * - compilerOptions.paths from the nearest tsconfig.json / jsconfig.json walking up from the importing
+ *   file (stopping at the project root), honouring one level of a relative `extends`;
+ * - workspace packages: package.json#name of any package directory in the project maps to that
+ *   directory (`@acme/db` and `@acme/db/sub`);
+ * - the common `@/`, `~/`, `$lib/` defaults, relative to the nearest config directory and the root.
+ * Everything resolves to project-relative paths; targets outside the root are dropped.
+ */
+export function makeResolver(root, known) {
+  const configs = new Map(); // dir -> [[prefix, exact, targets]] | null
+  const rel = (abs) => path.relative(root, abs).split(path.sep).join('/');
+  const inside = (r) => r === '' || (!r.startsWith('..') && !path.isAbsolute(r));
+  const parse = (file, depth = 0) => {
+    const j = readJsonc(file);
+    if (!j || typeof j !== 'object') return null;
+    let co = (j.compilerOptions && typeof j.compilerOptions === 'object') ? j.compilerOptions : {};
+    let base = path.dirname(file);
+    if (!co.paths && depth === 0 && typeof j.extends === 'string' && j.extends.startsWith('.')) {
+      const ext = path.resolve(base, j.extends.endsWith('.json') ? j.extends : `${j.extends}.json`);
+      if (inside(rel(ext))) { const p = parse(ext, 1); if (p) return { ...p, extended: true }; }
+    }
+    if (!co.paths) return { dir: path.dirname(file), list: [] };
+    const baseDir = path.resolve(base, typeof co.baseUrl === 'string' ? co.baseUrl : '.');
+    const list = [];
+    for (const [k, v] of Object.entries(co.paths)) {
+      if (!Array.isArray(v)) continue;
+      const wild = k.endsWith('/*');
+      if (k.includes('*') && !wild) continue;
+      const targets = v.filter((x) => typeof x === 'string' && (wild ? x.endsWith('/*') : !x.includes('*')))
+        .map((x) => rel(path.resolve(baseDir, wild ? x.slice(0, -1) : x)) + (wild ? '/' : ''))
+        .map((x) => (x === '/' ? '' : x)).filter((x) => inside(x.replace(/\/$/, '')));
+      if (targets.length) list.push(wild ? [k.slice(0, -1), false, targets] : [k, true, targets]);
+    }
+    list.sort((a, b) => b[0].length - a[0].length);
+    return { dir: path.dirname(file), list };
+  };
+  /** Nearest config (tsconfig.json, else jsconfig.json) at or above `dirRel`, within the root. */
+  const nearest = (dirRel) => {
+    if (configs.has(dirRel)) return configs.get(dirRel);
+    let found = null;
+    for (const f of ['tsconfig.json', 'jsconfig.json']) {
+      const abs = path.join(root, dirRel, f);
+      if (fs.existsSync(abs)) { found = parse(abs); if (found) break; }
+    }
+    if (!found && dirRel) { const up = path.posix.dirname(dirRel); found = nearest(up === '.' || up === dirRel ? '' : up); }
+    configs.set(dirRel, found);
+    return found;
+  };
+  // Workspace packages: every package.json at or above a scanned file (inside the root).
+  const pkgs = new Map();
+  const seenDirs = new Set();
+  for (const f of known) {
+    let d = path.posix.dirname(f);
+    while (!seenDirs.has(d)) {
+      seenDirs.add(d);
+      const j = readJsonc(path.join(root, d === '.' ? '' : d, 'package.json'));
+      if (j && typeof j.name === 'string' && j.name && !pkgs.has(j.name)) {
+        const dir = d === '.' ? '' : d + '/';
+        const entries = [j.module, j.main, j.source, typeof j.exports === 'string' ? j.exports : j.exports && typeof j.exports['.'] === 'string' ? j.exports['.'] : null]
+          .filter((x) => typeof x === 'string').map((x) => path.posix.normalize(dir + x.replace(/^\.\//, '')).replace(/\.(d\.ts|js|mjs|cjs)$/, ''));
+        pkgs.set(j.name, { dir, entries });
+      }
+      if (d === '.' || d === '') break;
+      d = path.posix.dirname(d);
     }
   }
-  return out;
+  const pkgNames = [...pkgs.keys()].sort((a, b) => b.length - a.length);
+  const EXT_RE = /\.(js|jsx|mjs|cjs)$/;
+  const tryBase = (b) => {
+    const noJs = b.replace(EXT_RE, '');
+    for (const c of [b, ...EXTS.map((e) => noJs + e), ...EXTS.map((e) => `${b}/index${e}`)]) if (known.has(c)) return c;
+    return null;
+  };
+  return (from, spec) => {
+    if (typeof spec !== 'string' || !spec) return null;
+    if (spec.startsWith('.')) return tryBase(path.posix.join(path.posix.dirname(from), spec));
+    const bases = [];
+    const cfg = nearest(path.posix.dirname(from) === '.' ? '' : path.posix.dirname(from));
+    if (cfg) {
+      for (const [prefix, exact, targets] of cfg.list) {
+        if (exact ? spec === prefix : spec.startsWith(prefix)) for (const t of targets) bases.push(path.posix.normalize(exact ? t : t + spec.slice(prefix.length)));
+      }
+    }
+    for (const name of pkgNames) {
+      if (spec !== name && !spec.startsWith(name + '/')) continue;
+      const { dir, entries } = pkgs.get(name);
+      const sub = spec.slice(name.length + 1);
+      if (sub) bases.push(dir + sub, dir + 'src/' + sub);
+      else bases.push(...entries, dir + 'src/index', dir + 'index');
+      break;
+    }
+    const cfgDir = cfg ? rel(cfg.dir) : '';
+    for (const [prefix, targets] of DEFAULT_ALIASES) {
+      if (!spec.startsWith(prefix)) continue;
+      for (const t of targets) {
+        if (cfgDir) bases.push(path.posix.normalize(`${cfgDir}/${t}${spec.slice(prefix.length)}`));
+        bases.push(path.posix.normalize(t + spec.slice(prefix.length)));
+      }
+    }
+    for (const b of bases) { const hit = tryBase(b.replace(/^\.\//, '')); if (hit) return hit; }
+    return null;
+  };
 }
 
 /** Scan a list of files relative to root: first-pass export summaries, then every file. */
@@ -873,17 +972,7 @@ export function scanFiles(root, files, wrappers) {
   }
   // Pass 1: summaries, for imports across files.
   const known = new Set(texts.keys());
-  const al = aliases(root);
-  const resolveModule = (from, spec) => {
-    let bases = [];
-    if (spec.startsWith('.')) bases = [path.posix.join(path.posix.dirname(from), spec)];
-    else for (const [prefix, targets] of al) if (spec.startsWith(prefix)) for (const t of targets) bases.push(path.posix.normalize(t + spec.slice(prefix.length)));
-    for (const b of bases) {
-      const noJs = b.replace(/\.(js|jsx|mjs|cjs)$/, '');
-      for (const c of [b, ...EXTS.map((e) => noJs + e), ...EXTS.map((e) => `${b}/index${e}`)]) if (known.has(c)) return c;
-    }
-    return null;
-  };
+  const resolveModule = makeResolver(root, known);
   const summaries = new Map();
   const project = {
     lookup(file, spec, name, depth = 0) {
