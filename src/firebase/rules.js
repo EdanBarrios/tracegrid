@@ -313,7 +313,7 @@ export function pathMatches(rule, code, anyPrefix = false) {
 export function parseDatabaseRules(src, { now = new Date() } = {}) {
   const errors = [];
   let json;
-  try { json = JSON.parse(maskComments(src)); } catch (e) { return { allows: [], errors: [{ line: 0, error: `not valid JSON: ${e.message}` }] }; }
+  try { json = JSON.parse(maskComments(src).replace(/,(\s*[}\]])/g, '$1')); } catch (e) { return { allows: [], errors: [{ line: 0, error: `not valid JSON: ${e.message}` }] }; }
   const root = json && typeof json === 'object' ? json.rules : null;
   if (!root || typeof root !== 'object') return { allows: [], errors: [{ line: 0, error: 'no top-level "rules" object' }] };
   const line = lineIndex(src);

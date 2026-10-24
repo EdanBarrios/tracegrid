@@ -11,7 +11,7 @@ import { edgeHints } from './edge-checks.js';
 import { resolveProject } from './supabase-project.js';
 import { coreRules } from './rules/core.js';
 import { loadPlugins, runRules, makeGraph, RuleError, TIERS } from './engine.js';
-import { hasFirebaseJson } from './firebase/project.js';
+import { hasFirebaseProject } from './firebase/project.js';
 import { analyzeFirebase } from './firebase/analyze.js';
 
 export const SCHEMA_VERSION = 1;
@@ -84,7 +84,7 @@ export function makeSuppressor(cfg, hatches, categories = IGNORE_CATEGORY) {
 function usesFirebase(root, cfg, opts) {
   const p = cfg.platform || 'auto';
   if (p === 'firebase') return true;
-  if (p === 'supabase' || !hasFirebaseJson(root, cfg)) return false;
+  if (p === 'supabase' || !hasFirebaseProject(root, cfg)) return false;
   if (cfg.supabaseDir || cfg.migrations) return false;
   try { return resolveProject(root, cfg).how === 'default (not found)'; } catch { return false; }
 }

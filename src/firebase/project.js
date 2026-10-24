@@ -3,10 +3,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError } from '../config.js';
 import { isInside } from '../safe.js';
+import { maskComments } from './rules.js';
 
 export const FIREBASE_JSON = 'firebase.json';
 
-export const hasFirebaseJson = (root, cfg = {}) => fs.existsSync(path.join(root, cfg.firebaseJson || FIREBASE_JSON));
+/** Files that mark a Firebase project when there is no firebase.json (rules kept without the CLI config). */
+const RULES_FILES = ['firestore.rules', 'storage.rules', 'database.rules.json'];
+
+export const hasFirebaseProject = (root, cfg = {}) => fs.existsSync(path.join(root, cfg.firebaseJson || FIREBASE_JSON))
+  || (!cfg.firebaseJson && RULES_FILES.some((f) => fs.existsSync(path.join(root, f))));
+
+/** A text file in UTF-8 or UTF-16 (editors on Windows save rules files as UTF-16 with a BOM). */
+export function readText(abs) {
+  const b = fs.readFileSync(abs);
+  if (b[0] === 0xff && b[1] === 0xfe) return b.subarray(2).toString('utf16le');
+  if (b[0] === 0xfe && b[1] === 0xff) { const c = Buffer.from(b.subarray(2)); c.swap16(); return c.toString('utf16le'); }
+  return b.toString('utf8').replace(/^\uFEFF/, '');
+}
+
+/** JSON as the Firebase CLI reads it: comments and trailing commas allowed. */
+export function parseLooseJson(text) {
+  return JSON.parse(maskComments(text).replace(/,(\s*[}\]])/g, '$1'));
+}
 
 const list = (v) => (Array.isArray(v) ? v : v && typeof v === 'object' ? [v] : []);
 
@@ -17,7 +35,7 @@ const list = (v) => (Array.isArray(v) ? v : v && typeof v === 'object' ? [v] : [
 export function resolveFirebase(root, cfg = {}) {
   const configFile = cfg.firebaseJson || FIREBASE_JSON;
   let json = {};
-  try { json = JSON.parse(fs.readFileSync(path.join(root, configFile), 'utf8')); } catch (e) {
+  try { json = parseLooseJson(readText(path.join(root, configFile))); } catch (e) {
     if (e.code !== 'ENOENT') throw new ConfigError(`${configFile}: ${e.message}`);
   }
   const base = path.posix.dirname(configFile) === '.' ? '' : path.posix.dirname(configFile) + '/';

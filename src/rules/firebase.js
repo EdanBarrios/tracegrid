@@ -26,10 +26,13 @@ export const firebaseRules = [
     level: 'error',
     tier: 'fix',
     title: 'Security Rules that let anyone write, signed in or not',
-    why: 'An `allow create/update/delete/write` whose condition is always true (`if true`, no condition, or a test-mode date that has not passed). Anyone with the project\'s public config can create, change or delete these documents or files. Require sign-in and an ownership or role check.',
+    why: 'An `allow create/update/delete/write` whose condition is always true (`if true`, no condition, or a test-mode date that has not passed). Anyone with the project\'s public config can create, change or delete these documents or files. Require sign-in and an ownership or role check. Open `create` alone is a Review item: it is how contact forms and guest orders are often written, and the question is validation and abuse, not takeover.',
     run({ graph }) {
       return ruleNodes(graph).map((n) => ({ n, ops: opsWith(n, WRITE, (c) => c === 'public') })).filter(({ ops }) => ops.length)
-        .map(({ n, ops }) => ({ id: n.label, node: n.id, at: firstAt(n, ops), message: `${ops.join(', ')} open to everyone in ${where(n)}`, note: notesOf(n, ops) }));
+        .map(({ n, ops }) => ({ id: n.label, node: n.id, at: firstAt(n, ops), message: `${ops.join(', ')} open to everyone in ${where(n)}`,
+          ...(ops.length === 1 && ops[0] === 'create' && n.service !== 'storage'
+            ? { level: 'warning', tier: 'review', note: [notesOf(n, ops), 'create only (existing documents cannot be changed): check that the rule validates the fields and that abuse is bounded'].filter(Boolean).join('; ') }
+            : { note: notesOf(n, ops) }) }));
     },
   },
   {

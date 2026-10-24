@@ -7,14 +7,14 @@ import path from 'node:path';
 import { findFiles, DEFAULTS } from '../config.js';
 import { runRules, makeGraph, TIERS } from '../engine.js';
 import { firebaseRules } from '../rules/firebase.js';
-import { resolveFirebase } from './project.js';
+import { resolveFirebase, readText } from './project.js';
 import { parseRulesFile, parseDatabaseRules, pathMatches, isRecursive, rankOf, OPS } from './rules.js';
 import { scanFirebase } from './scan.js';
 import { listCloudFunctions, missingAuthCheck } from './functions.js';
 import { makeSuppressor, codeRoots, SCHEMA_VERSION } from '../analyze.js';
 
 /** Code scanned by default in a Firebase project: Dart plus the usual JS/TS. */
-export const FIREBASE_INCLUDE = ['**/*.dart', ...DEFAULTS.include];
+export const FIREBASE_INCLUDE = ['**/*.dart', '**/*.html', ...DEFAULTS.include];
 const FIREBASE_EXCLUDE = ['**/*.g.dart', '**/*.freezed.dart', '**/*.mocks.dart', '**/*_test.dart', 'test/**', 'integration_test/**', 'test_driver/**', '**/test/**'];
 
 /** Config ignore list that applies to each Firebase rule. */
@@ -31,11 +31,11 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
 
   // Security Rules
   const rulesets = [];
-  const read = (file) => { try { return fs.readFileSync(path.join(root, file), 'utf8'); } catch (e) { unparsed.push({ file, line: 0, reason: e.code || e.message, text: '' }); return null; } };
+  const read = (file) => { try { return readText(path.join(root, file)); } catch (e) { unparsed.push({ file, line: 0, reason: e.code || e.message, text: '' }); return null; } };
   for (const f of project.firestore) { const s = read(f.rules); if (s != null) rulesets.push({ ...parseRulesFile(s, { now }), service: 'firestore', file: f.rules, scope: f.database !== '(default)' ? f.database : '' }); }
   for (const f of project.storage) { const s = read(f.rules); if (s != null) rulesets.push({ ...parseRulesFile(s, { now }), service: 'storage', file: f.rules, scope: f.bucket || '' }); }
   for (const f of project.database) { const s = read(f.rules); if (s != null) rulesets.push({ ...parseDatabaseRules(s, { now }), service: 'rtdb', file: f.rules, scope: f.instance || '' }); }
-  for (const r of rulesets) for (const e of r.errors) unparsed.push({ file: r.file, line: e.line, reason: e.error, text: '', risky: true });
+  for (const r of rulesets) for (const e of r.errors) unparsed.push({ file: r.file, line: e.line, reason: e.error, text: '' });
   for (const m of project.missing) warnings.push(`${project.configFile} names ${m}, which does not exist.`);
   const multi = (svc) => rulesets.filter((r) => r.service === svc).length > 1;
 

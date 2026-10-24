@@ -31,78 +31,97 @@ function resolveModule(root, fromFile, spec) {
   return null;
 }
 
-/** Definitions in one module: name -> { kind, line, body, trigger? }; plus its re-exports. */
+/** End of the statement starting at `from`: the first `;` or line break outside brackets (strings skipped). */
+function statementEnd(t, from, limit) {
+  let depth = 0;
+  for (let k = from; k < limit; k++) {
+    const c = t[k];
+    if (c === '"' || c === "'" || c === '`') { k++; while (k < limit && t[k] !== c) k += t[k] === '\\' ? 2 : 1; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    else if (depth <= 0 && (c === ';' || (c === '\n' && !/^\s*[.?]/.test(t.slice(k + 1, k + 80))))) return k;
+  }
+  return limit;
+}
+
+/**
+ * One module: `defs` (local name -> { kind, line, body, trigger? }), `exported` (exported name -> local
+ * name) and `reexports` from other modules. Handles `export const`, `exports.x =`, a local `const x`
+ * exported later (`export { x as y }`, `module.exports = { x }`), and grouped functions
+ * (`export * as group from`, `exports.group = require()`), which deploy as `group-name`.
+ */
 function readModule(root, file) {
   let src;
   try { src = fs.readFileSync(path.join(root, file), 'utf8'); } catch { return null; }
   const t = maskCode(src);
   const line = lineIndex(t);
   const defs = new Map();
-  const starts = [...t.matchAll(/^[ \t]*(?:export\s+const\s+([\w$]+)|exports\.([\w$]+)|module\.exports\.([\w$]+))\s*(?::[^=]+)?=\s*/gm)];
+  const exported = new Map();
+  const reexports = [];
+  // Top-level declarations only (column 0): a `const` inside a handler must not cut its body short.
+  const starts = [...t.matchAll(/^(?:(export\s+)?(?:const|let|var)\s+([\w$]+)|exports\.([\w$]+)|module\.exports\.([\w$]+))\s*(?::[^=\n]+)?=(?!=)\s*/gm)];
   for (let k = 0; k < starts.length; k++) {
     const m = starts[k];
-    const name = m[1] || m[2] || m[3];
+    const name = m[2] || m[3] || m[4];
+    const isExport = !!(m[1] || m[3] || m[4]);
     const from = m.index + m[0].length;
-    const to = k + 1 < starts.length ? starts[k + 1].index : t.length;
-    const body = t.slice(from, to);
+    const body = t.slice(from, statementEnd(t, from, k + 1 < starts.length ? starts[k + 1].index : t.length));
     const head = body.slice(0, 600);
+    const req = /^require\(\s*(['"])([^'"]+)\1\s*\)\s*(?:;|$)/m.exec(body.split('\n')[0]);
+    if (req && isExport) { reexports.push({ all: true, ns: name, spec: req[2] }); continue; }
     const kind = (KINDS.find(([, re]) => re.test(head)) || [])[0];
-    if (!kind) { if (/^[\w$]+\s*;/.test(body)) defs.set(name, { alias: /^[\w$]+/.exec(body)[0], line: line(m.index) }); continue; }
-    const trig = kind === 'trigger' ? /(?:document|ref|path)\s*\(?\s*:?\s*(['"`])([^'"`]+\/[^'"`]*)\1/.exec(head) || /\(\s*(['"`])([^'"`]+\/[^'"`]*)\1/.exec(head) : null;
-    defs.set(name, { kind, line: line(m.index), body, ...(trig ? { trigger: trig[2] } : {}) });
-  }
-  const reexports = [];
-  for (const m of t.matchAll(/export\s*\*\s*from\s*(['"])([^'"]+)\1/g)) reexports.push({ all: true, spec: m[2] });
-  for (const m of t.matchAll(/export\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2/g)) {
-    for (const part of m[1].split(',').map((s) => s.trim()).filter(Boolean)) {
-      const [orig, as] = part.split(/\s+as\s+/).map((s) => s.trim());
-      reexports.push({ name: orig, as: as || orig, spec: m[3] });
+    if (!kind) { if (isExport && /^[\w$]+\s*;?\s*$/m.test(body.split('\n')[0])) defs.set(name, { alias: /^[\w$]+/.exec(body)[0], line: line(m.index) }); else continue; } else {
+      const trig = kind === 'trigger' ? /(?:document|ref|path)\s*\(?\s*:?\s*(['"`])([^'"`]+\/[^'"`]*)\1/.exec(head) || /\(\s*(['"`])([^'"`]+\/[^'"`]*)\1/.exec(head) : null;
+      defs.set(name, { kind, line: line(m.index), body, ...(trig ? { trigger: trig[2] } : {}) });
     }
+    if (isExport) exported.set(name, name);
   }
-  // `import { a } from './x'; export { a };` and `export const a = imported;`
+  const parts = (list) => list.split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split(/\s+as\s+|\s*:\s*/).map((y) => y.trim()));
+  for (const m of t.matchAll(/export\s*\*\s*(?:as\s+([\w$]+)\s*)?from\s*(['"])([^'"]+)\2/g)) reexports.push({ all: true, ns: m[1], spec: m[3] });
+  for (const m of t.matchAll(/export\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2/g)) for (const [orig, as] of parts(m[1])) reexports.push({ name: orig, as: as || orig, spec: m[3] });
   const imports = new Map();
-  for (const m of t.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2/g)) {
-    for (const part of m[1].split(',').map((s) => s.trim()).filter(Boolean)) { const [orig, as] = part.split(/\s+as\s+/).map((s) => s.trim()); imports.set(as || orig, { name: orig, spec: m[3] }); }
-  }
-  for (const m of t.matchAll(/export\s*\{([^}]*)\}\s*(?!\s*from)/g)) {
-    if (/from\s*['"]/.test(t.slice(m.index + m[0].length - 1, m.index + m[0].length + 20))) continue;
-    for (const part of m[1].split(',').map((s) => s.trim()).filter(Boolean)) {
-      const [orig, as] = part.split(/\s+as\s+/).map((s) => s.trim());
-      if (imports.has(orig)) reexports.push({ name: imports.get(orig).name, as: as || orig, spec: imports.get(orig).spec });
-    }
+  for (const m of t.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2/g)) for (const [orig, as] of parts(m[1])) imports.set(as || orig, { name: orig, spec: m[3] });
+  // `export { a, b as c };` and `module.exports = { a, c: b };` naming local or imported bindings.
+  const local = [];
+  for (const m of t.matchAll(/export\s*\{([^}]*)\}(?!\s*from)/g)) for (const [orig, as] of parts(m[1])) local.push([as || orig, orig]);
+  for (const m of t.matchAll(/module\.exports\s*=\s*\{([^}]*)\}/g)) for (const [key, val] of parts(m[1])) local.push([key, val || key]);
+  for (const [as, orig] of local) {
+    if (defs.has(orig)) exported.set(as, orig);
+    else if (imports.has(orig)) reexports.push({ name: imports.get(orig).name, as, spec: imports.get(orig).spec });
   }
   for (const [name, d] of [...defs]) if (d.alias && imports.has(d.alias)) reexports.push({ name: imports.get(d.alias).name, as: name, spec: imports.get(d.alias).spec });
-  return { defs, reexports };
+  return { defs, exported, reexports };
 }
 
 /**
  * Deployed functions of each codebase: [{ name, kind, file, line, at, body, trigger?, codebase }].
- * Without an entry module, every definition under the source directory counts.
+ * Without an entry module, every exported definition under the source directory counts.
  */
 export function listCloudFunctions(root, sources) {
   const out = [];
   for (const s of sources) {
     const entry = entryOf(root, s.dir);
     const seen = new Set();
-    const collect = (file, only, rename, depth) => {
-      if (depth > 12 || seen.has(`${file}|${only || '*'}`)) return;
-      seen.add(`${file}|${only || '*'}`);
+    /** Exports of `file` (only the one named `only`, deployed as `rename`), each prefixed with `prefix`. */
+    const collect = (file, only, rename, prefix, depth) => {
+      const key = `${file}|${only || '*'}|${prefix}`;
+      if (depth > 12 || seen.has(key)) return;
+      seen.add(key);
       const mod = readModule(root, file);
       if (!mod) return;
-      for (const [name, d] of mod.defs) {
-        if (!d.kind || (only && name !== only)) continue;
-        const as = only ? rename : name;
-        out.push({ name: as, kind: d.kind, file, line: d.line, at: `${file}:${d.line}`, body: d.body, trigger: d.trigger, codebase: s.codebase });
+      for (const [as, localName] of mod.exported) {
+        const d = mod.defs.get(localName);
+        if (!d || !d.kind || (only && as !== only)) continue;
+        out.push({ name: prefix + (only ? rename : as), kind: d.kind, file, line: d.line, at: `${file}:${d.line}`, body: d.body, trigger: d.trigger, codebase: s.codebase });
       }
       for (const r of mod.reexports) {
-        if (only && !r.all && r.as !== only) continue;
         const target = resolveModule(root, file, r.spec);
         if (!target) continue;
-        if (r.all) collect(target, only, rename, depth + 1);
-        else collect(target, r.name, only ? rename : r.as, depth + 1);
+        if (r.all && r.ns) { if (!only) collect(target, null, null, `${prefix}${r.ns}-`, depth + 1); else if (only.startsWith(`${r.ns}-`)) collect(target, only.slice(r.ns.length + 1), rename, prefix, depth + 1); } else if (r.all) collect(target, only, rename, prefix, depth + 1);
+        else if (!only || r.as === only) collect(target, r.name, only ? rename : r.as, prefix, depth + 1);
       }
     };
-    if (entry) collect(entry, null, null, 0);
+    if (entry) collect(entry, null, null, '', 0);
     else {
       const walk = (dir) => {
         let ents;
@@ -111,7 +130,7 @@ export function listCloudFunctions(root, sources) {
           if (e.name === 'node_modules' || e.name.startsWith('.') || e.name === 'lib' || e.name === '__tests__') continue;
           const rel = path.posix.join(dir, e.name);
           if (e.isDirectory()) walk(rel);
-          else if (/\.(ts|js|mjs|cjs)$/.test(e.name) && !/\.(test|spec|d)\.[tj]s$/.test(e.name)) collect(rel, null, null, 0);
+          else if (/\.(ts|js|mjs|cjs)$/.test(e.name) && !/\.(test|spec|d)\.[tj]s$/.test(e.name)) collect(rel, null, null, '', 0);
         }
       };
       walk(s.dir);

@@ -7,6 +7,7 @@ import { analyze } from '../src/analyze.js';
 import { renderReport } from '../src/report.js';
 import { renderHtml } from '../src/html.js';
 import { toSarif } from '../src/ci.js';
+import path from 'node:path';
 import { project, rm } from './helpers.js';
 
 const NOW = new Date('2026-10-23T00:00:00Z');
@@ -231,7 +232,7 @@ test('analyze: a Firebase project gets Firebase findings, tiers and a rendered r
     const got = r.findings.map((f) => `${f.tier} ${f.rule} ${f.id}`).sort();
     assert.deepEqual(got, [
       'fix firebase-rules-open-catch-all rtdb:/',
-      'fix firebase-rules-public-write /guestbook/{id}',
+      'review firebase-rules-public-write /guestbook/{id}',
       'fix firestore-rule-unused /secrets/{id}',
       'review callable-without-auth-check forgotten',
       'review firebase-rules-public-read /posts/{id}',
@@ -293,5 +294,24 @@ test('analyze: a test-mode catch-all is a Fix while its date has not passed', as
     const f = r.findings.filter((x) => x.tier === 'fix').map((x) => [x.rule, x.id]);
     assert.deepEqual(f.sort(), [['firebase-rules-open-catch-all', '/{document=**}'], ['firebase-rules-public-write', '/{document=**}']]);
     assert.match(r.findings[0].note || r.findings[1].note, /test-mode rule: open to everyone until 2099-01-01/);
+  } finally { rm(d); }
+});
+
+test('listCloudFunctions: local consts exported later, and grouped functions', () => {
+  const d = project({
+    'functions/index.js': `const functions = require('firebase-functions');
+const customToken = functions.https.onCall((data, context) => context.auth);
+const internal = functions.https.onCall(() => 1);
+module.exports = { customToken, renamedHook: hook };
+exports.billing = require('./billing');`,
+    'functions/billing.js': "exports.charge = require('firebase-functions').https.onCall((d, c) => c.auth);",
+    'functions/package.json': '{}',
+    'functions/src/index.ts': "export * as production from './production';\nconst local = onCall(async (r) => r.auth);\nexport { local as exposed };",
+    'functions/src/production.ts': "export const createOrder = onCall(async (request) => request.auth);",
+  });
+  try {
+    assert.deepEqual(listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]).map((f) => f.name), ['exposed', 'production-createOrder']);
+    rm(path.join(d, 'functions/src'));
+    assert.deepEqual(listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]).map((f) => f.name), ['billing-charge', 'customToken']);
   } finally { rm(d); }
 });
