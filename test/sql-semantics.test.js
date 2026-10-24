@@ -570,3 +570,31 @@ test('S-schema-6 Supabase platform schemas (Queues, GraphQL) are not the app\'s 
     { config: { exposedSchemas: ['public', 'pgmq_public'] }, code: { 'src/a.ts': `export const a = 1;\n` } });
   assert.deepEqual(ids(r, 'exposed-uncalled-function'), []);
 });
+
+test('DO block: an apostrophe in a comment does not hide the EXECUTE that creates policies', async () => {
+  const { project, rm } = await import('./helpers.js');
+  const { analyze } = await import('../src/analyze.js');
+  const d = project({
+    'supabase/config.toml': '',
+    'supabase/migrations/1_init.sql': `create table public.docs (id uuid primary key, fund_id uuid);
+alter table public.docs enable row level security;
+create function public.doc_ids_readable() returns uuid[] language sql security definer as $f$ select array[]::uuid[] $f$;
+grant execute on function public.doc_ids_readable() to authenticated;
+do $$
+declare
+  t text;
+  -- Not a member of this row's fund: their own policies decide.
+  tables text[] := array['docs'];
+begin
+  foreach t in array tables loop
+    execute format('create policy "scoped" on public.%I for select to authenticated using (%s)', t,
+      'id = any((select public.doc_ids_readable())::uuid[])');
+  end loop;
+end $$;`,
+    'src/a.ts': "import { createClient } from '@supabase/supabase-js';\nconst s = createClient('u', 'k');\ns.from('docs').select();",
+  });
+  try {
+    const r = await analyze(d);
+    assert.ok(!r.findings.some((f) => f.rule === 'exposed-uncalled-function' && f.id.startsWith('doc_ids_readable')), JSON.stringify(r.findings.map((f) => f.fingerprint)));
+  } finally { rm(d); }
+});

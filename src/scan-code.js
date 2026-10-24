@@ -774,8 +774,39 @@ function literalUnion(t) {
   return out.length ? out : null;
 }
 
+/**
+ * Hand-rolled REST helpers: a function that puts its parameter into a PostgREST RPC or edge-function
+ * URL (`fetch(\`${BASE}/rest/v1/rpc/${name}\`)`) is a wrapper, so `rpc('agent_post')` is a caller. Its
+ * client is unknown (anon key, a user token or the service key), so call sites are weak: they link
+ * to functions that exist and never report missing ones. A helper that names the service key is
+ * privileged.
+ */
+function inferUrlWrappers(az, sf) {
+  const URL_KIND = [[/\/rest\/v1\/rpc\/$/, 'rpc'], [/\/functions\/v1\/$/, 'invoke']];
+  const register = (prefix, expr) => {
+    const kind = (URL_KIND.find(([re]) => re.test(prefix)) || [])[1];
+    const w = kind && az.paramOf(expr);
+    if (!w || az.wrappers.has(w.fn)) return;
+    const body = w.fn.getText ? w.fn.getText(sf) : '';
+    az.wrappers.set(w.fn, { kind, index: w.index, prop: w.prop, extra: { via: 'url-helper' }, weak: true, ...(/service_?role|SERVICE_ROLE|secret_?key|SECRET_KEY/i.test(body) ? { privileged: true } : {}), name: az.fnName(w.fn) });
+  };
+  (function walk(n) {
+    if (ts.isTemplateExpression(n)) {
+      let before = n.head.text;
+      for (const span of n.templateSpans) { register(before, span.expression); before = span.literal.text; }
+    } else if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken && ts.isIdentifier(unwrap(n.right))) {
+      const l = unwrap(n.left);
+      const tail = ts.isStringLiteral(l) || ts.isNoSubstitutionTemplateLiteral(l) ? l.text
+        : ts.isBinaryExpression(l) && (ts.isStringLiteral(unwrap(l.right)) || ts.isNoSubstitutionTemplateLiteral(unwrap(l.right))) ? unwrap(l.right).text : null;
+      if (tail != null) register(tail, n.right);
+    }
+    ts.forEachChild(n, walk);
+  })(sf);
+}
+
 /** Infer wrappers to a fixpoint: a function that passes its parameter as the name of a Supabase call. */
-function inferWrappers(az, allCalls) {
+function inferWrappers(az, allCalls, sf) {
+  if (sf) inferUrlWrappers(az, sf);
   for (let changed = true, rounds = 0; changed && rounds < 6; rounds++) {
     changed = false;
     for (const c of allCalls) {
@@ -804,7 +835,7 @@ export function summarize(text, file, configWrappers, project) {
   const az = analyzer(sf, file, configWrappers, project);
   const allCalls = [];
   (function collect(n) { if (ts.isCallExpression(n)) allCalls.push(n); ts.forEachChild(n, collect); })(sf);
-  inferWrappers(az, allCalls);
+  inferWrappers(az, allCalls, sf);
   const out = { exports: {}, star: [], from: {} };
   const exported = (s) => s.modifiers && s.modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
   const valueOf = (nameNode, init, fnNode) => {
@@ -892,7 +923,7 @@ export function scanSource(text, file, wrappers = { rpc: [], from: [], invoke: [
 
   const allCalls = [];
   (function collect(n) { if (ts.isCallExpression(n)) allCalls.push(n); ts.forEachChild(n, collect); })(sf);
-  inferWrappers(az, allCalls);
+  inferWrappers(az, allCalls, sf);
 
   // The dynamic call inside a wrapper (`const call = (fn) => db.rpc(fn)`) is only reported when some
   // call site of the wrapper is itself unresolved, or the wrapper can be called from elsewhere.

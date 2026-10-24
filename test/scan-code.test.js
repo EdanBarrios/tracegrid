@@ -131,3 +131,18 @@ test('a URL name with a runtime suffix is a pattern, not a name', () => {
     assert.deepEqual(r.unresolved.map((u) => [u.kind, u.pattern]), [[kind, pattern]], src);
   }
 });
+
+test('hand-rolled PostgREST helper: rpc(name) building /rest/v1/rpc/${name} is a wrapper', async () => {
+  const { scanSource } = await import('../src/scan-code.js');
+  const src = `const BASE_URL = process.env.SUPABASE_URL;
+async function rpc(name, body) {
+  const res = await fetch(\`\${BASE_URL}/rest/v1/rpc/\${name}\`, { method: 'POST', body: JSON.stringify(body) });
+  return res.json();
+}
+export const react = (id) => rpc('agent_react_post', { id });
+function invoke(fn) { return fetch(BASE_URL + '/functions/v1/' + fn); }
+invoke('send-email');`;
+  const r = scanSource(src, 'mcp/api.js');
+  const got = r.calls.map((c) => [c.kind, c.name, !!c.weak]);
+  assert.deepEqual(got.filter((x) => x[1] === 'agent_react_post' || x[1] === 'send-email'), [['rpc', 'agent_react_post', true], ['invoke', 'send-email', true]]);
+});

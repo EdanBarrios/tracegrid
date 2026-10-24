@@ -656,7 +656,38 @@ const DDL_RE = /\b(create\s+(or\s+replace\s+)?(policy|function|procedure|table|v
 /** EXECUTE as a PL/pgSQL statement, not the privilege (`grant execute on`) or `execute function`. */
 const EXEC_STMT = /(?<!\b(?:grant|revoke|,)\s*)\bexecute\b(?!\s+(?:on|function|procedure)\b)/i;
 
+/**
+ * Blank `--` and `/* *\/` comments (same length, newlines kept), skipping '...' and $tag$...$tag$
+ * literals. A comment like `-- the row's fund` must not open a string for maskStrings().
+ */
+export function blankSqlComments(t) {
+  let out = '';
+  let i = 0;
+  while (i < t.length) {
+    const c = t[i];
+    if (c === "'") {
+      let j = i + 1;
+      while (j < t.length) { if (t[j] === "'") { if (t[j + 1] === "'") { j += 2; continue; } break; } j++; }
+      out += t.slice(i, j + 1); i = j + 1;
+    } else if (c === '$') {
+      const tag = /^\$[A-Za-z_]*\$/.exec(t.slice(i, i + 64));
+      if (!tag) { out += c; i++; continue; }
+      const end = t.indexOf(tag[0], i + tag[0].length);
+      const j = end < 0 ? t.length : end + tag[0].length;
+      out += t.slice(i, j); i = j;
+    } else if (c === '-' && t[i + 1] === '-') {
+      let j = i; while (j < t.length && t[j] !== '\n') j++;
+      out += ' '.repeat(j - i); i = j;
+    } else if (c === '/' && t[i + 1] === '*') {
+      const e = t.indexOf('*/', i + 2); const j = e < 0 ? t.length : e + 2;
+      out += t.slice(i, j).replace(/[^\n]/g, ' '); i = j;
+    } else { out += c; i++; }
+  }
+  return out;
+}
+
 function doBlock(st, body, loc, file) {
+  body = blankSqlComments(body);
   const dynamic = EXEC_STMT.test(maskStrings(body));
   if (dynamic) st.dynamic.push({ text: body, ...loc });
   // Array variables declared with a literal value: `revoked text[] := array['a', 'b'];`

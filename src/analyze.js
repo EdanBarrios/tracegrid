@@ -281,6 +281,8 @@ export async function analyze(root, opts = {}) {
       if (!nodes.has(`table:${c.name}`)) node(`table:${c.name}`, 'table', c.name, { schema: schemaOf(c.name), missing: true });
       edge(caller.id, `table:${c.name}`, rel('from', c), c.confidence, at, c.op);
     } else if (c.kind === 'invoke') {
+      // A weak call (a hand-rolled URL helper) only links to edge functions that exist.
+      if (c.weak && !edgeNames.has(c.name)) continue;
       fileNode();
       if (!nodes.has(`edge:${c.name}`)) node(`edge:${c.name}`, 'edge_function', c.name, { missing: true });
       edge(caller.id, `edge:${c.name}`, rel('invoke', c), c.confidence, at);
