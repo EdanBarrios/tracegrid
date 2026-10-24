@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && me().role == 'admin'; }
+    function isMember(teamId) { return signedIn() && request.auth.uid in get(/databases/$(database)/documents/teams/$(teamId)).data.members; }
+
+    // Profiles. The owner may write their own profile, and isAdmin() reads `role` from it.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /teams/{teamId} {
+      allow read: if isMember(teamId);
+      allow create: if signedIn() && request.resource.data.owner == request.auth.uid;
+      allow update: if signedIn() && resource.data.owner == request.auth.uid;
+
+      match /tasks/{taskId} {
+        allow read, write: if isMember(teamId);
+      }
+    }
+
+    // Invite codes: left open while building the invite flow.
+    match /invites/{code} {
+      allow read, write: if true;
+    }
+
+    // Weekly reports are written by a Cloud Function; the app never reads them.
+    match /reports/{reportId} {
+      allow read: if signedIn();
+    }
+
+    match /feedback/{id} {
+      allow create: if true;
+    }
+
+    match /audit/{entryId} {
+      allow read: if isAdmin();
+    }
+  }
+}

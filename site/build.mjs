@@ -21,4 +21,8 @@ const out = path.join(dist, 'demo');
 execFileSync(process.execPath, [path.join(repo, 'bin/tracegrid.js'), '--demo', '--out', out], { stdio: ['ignore', 'ignore', 'inherit'] });
 fs.renameSync(path.join(out, 'graph.html'), path.join(out, 'index.html'));
 for (const f of ['index.html', 'graph.json', 'report.md']) if (!fs.existsSync(path.join(out, f))) throw new Error(`demo did not write ${f}`);
+// /demo/firebase: the Firebase + Flutter example.
+const fbOut = path.join(dist, 'demo', 'firebase');
+execFileSync(process.execPath, [path.join(repo, 'bin/tracegrid.js'), '--demo', 'firebase', '--out', fbOut], { stdio: ['ignore', 'ignore', 'inherit'] });
+fs.renameSync(path.join(fbOut, 'graph.html'), path.join(fbOut, 'index.html'));
 console.log(`site built: ${path.relative(repo, dist)}`);

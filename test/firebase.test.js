@@ -467,3 +467,11 @@ test('listCloudFunctions: members of an imported object of functions', () => {
     assert.deepEqual(listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]).map((f) => f.name), ['addFiles']);
   } finally { rm(d); }
 });
+
+test('the bundled Firebase demo reports its planted findings', async () => {
+  const { fileURLToPath } = await import('node:url');
+  const r = await analyze(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'firebase-demo'));
+  assert.equal(r.platform, 'firebase');
+  assert.deepEqual(r.tiers, { fix: 3, review: 12, info: 1 });
+  assert.deepEqual(r.findings.filter((f) => f.tier === 'fix').map((f) => f.id).sort(), ['/invites/{code}', '/reports/{reportId}', '/users/{uid}.role']);
+});

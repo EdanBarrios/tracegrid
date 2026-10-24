@@ -14,7 +14,7 @@ import { COLORWAYS } from '../src/colorways.js';
 import { toSarif, githubAnnotations, stepSummary } from '../src/ci.js';
 
 const HELP = () => `tracegrid [dir] [options]
-tracegrid --demo            run on the bundled example project
+tracegrid --demo [firebase] run on a bundled example project (Supabase, or Firebase + Flutter)
 tracegrid help              this text
 
 What can a signed-in user reach that no code calls? Maps how app code reaches a
@@ -84,7 +84,8 @@ function parseArgs(argv) {
     else if (a.dir === null) a.dir = x;
     else fail(`Unexpected argument ${oneLine(x)}: tracegrid takes one directory (got ${oneLine(a.dir)} already). Options start with --.`);
   }
-  if (a.demo && a.dir !== null) fail('--demo takes no directory');
+  if (a.demo && (a.dir === 'firebase' || a.dir === 'supabase')) { a.demo = a.dir; a.dir = null; }
+  if (a.demo && a.dir !== null) fail('--demo takes no directory (only `firebase` to pick the Firebase example)');
   if (a.dir === null) a.dir = '.';
   return a;
 }
@@ -103,7 +104,7 @@ async function main() {
     console.log(pkg.version); return 0;
   }
 
-  const demo = args.demo ? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'demo-app') : null;
+  const demo = args.demo ? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', args.demo === 'firebase' ? 'firebase-demo' : 'demo-app') : null;
   if (demo && !fs.existsSync(demo)) fail('--demo: the bundled example is missing from this installation');
   const root = path.resolve(demo || args.dir);
   if (!fs.existsSync(root)) fail(`No such directory: ${root}`);
