@@ -19,7 +19,7 @@ reachability before changing the Supabase surface.
 ## Supabase reachability (tracegrid)
 
 Before changing, revoking, dropping or renaming a Supabase table, RPC, policy, grant or edge
-function, run `npx --yes tracegrid@0.2.0 --out .tracegrid` from the repo root and check callers:
+function, run `npx --yes tracegrid@0.2.1 --out .tracegrid` from the repo root and check callers:
 
 - Read `.tracegrid/report.md` for findings (`file:line`), grouped Fix / Review / Info; start
   with Fix. Do not read `graph.html`.

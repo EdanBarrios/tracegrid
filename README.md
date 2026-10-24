@@ -50,7 +50,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npx --yes tracegrid@0.2.0 --check --github --no-plugins
+      - run: npx --yes tracegrid@0.2.1 --check --github --no-plugins
 ```
 
 `--check` fails on any new Fix finding not in `tracegrid.baseline.json` (create it with `--update-baseline`). SARIF and more: [docs/ci.md](docs/ci.md).

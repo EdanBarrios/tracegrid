@@ -7,7 +7,7 @@ branding:
 inputs:
   version:
     description: Exact tracegrid version from npm. Pinned; bump deliberately.
-    default: 0.2.0
+    default: 0.2.1
   args:
     description: Extra arguments. Never pass --db-url or --allow-plugins on pull_request events.
     default: --check --github

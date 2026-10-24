@@ -3,6 +3,18 @@
 All notable changes. Versions follow semver; while 0.x, minor versions may break the config,
 the rule contract or `graph.json` (whose `schema_version` is bumped when its shape breaks).
 
+## 0.2.1
+
+Fixes from a hand check of 0.2.0 on 23 public Supabase repositories it had not seen
+(20 of 24 Fix findings correct; these two causes produced 3 of the 4 false positives). No
+change on the 20 repositories in [BENCHMARKS.md](BENCHMARKS.md).
+
+- DO blocks: comments are blanked before string masking, so an apostrophe in a comment
+  (`-- this row's total`) no longer hides the `EXECUTE` that follows. Functions used only by
+  policies created that way were reported as exposed with no caller.
+- Helpers that build `/rest/v1/rpc/${name}` or `/functions/v1/${name}` from a parameter are
+  treated as wrappers: their literal call sites count as callers.
+
 ## 0.2.0
 
 Renamed from supareach before the first release.

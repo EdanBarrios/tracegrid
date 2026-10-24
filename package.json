@@ -1,6 +1,6 @@
 {
   "name": "tracegrid",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Map how your app code reaches your Supabase schema: tables, RPCs, edge functions, storage, grants and RLS. Static, offline, no AI.",
   "type": "module",
   "bin": {
