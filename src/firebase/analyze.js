@@ -89,7 +89,7 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
   // Built output of a functions codebase (lib/ from tsc) duplicates its src/.
   const exclude = [...cfg.exclude, ...(userInclude ? [] : FIREBASE_EXCLUDE), ...fnDirs.flatMap((d) => [`${d}/lib/**`, `${d}/dist/**`, `${d}/**/__tests__/**`, `${d}/test/**`])];
   const files = findFiles(root, include, exclude, { outputDirs: cfg.outputDirs || [] });
-  const code = scanFirebase(root, files, { serverDirs: fnDirs, wrappers: (cfg.wrappers && cfg.wrappers.invoke) || [] });
+  const code = scanFirebase(root, files, { serverDirs: fnDirs, wrappers: (cfg.wrappers && cfg.wrappers.invoke) || [], pathWrappers: (cfg.wrappers && cfg.wrappers.firestore) || [] });
   const isServer = (f) => fnDirs.some((d) => f.startsWith(d.replace(/\/?$/, '/')));
   const fileNode = (file) => node(`file:${file}`, 'file', file, { side: isServer(file) ? 'edge' : 'client' });
 

@@ -34,7 +34,7 @@ export function maskCode(src) {
 }
 
 /** Index just past the bracket that closes the one at `at`. */
-function closeOf(t, at) {
+export function closeOf(t, at) {
   const open = t[at];
   const close = { '(': ')', '[': ']', '{': '}' }[open];
   let depth = 0;
@@ -55,7 +55,7 @@ function closeOf(t, at) {
 }
 
 /** Split an argument list on top-level commas. */
-function splitArgs(s) {
+export function splitArgs(s) {
   const out = [];
   let depth = 0;
   let last = 0;
@@ -148,7 +148,7 @@ function receiverBefore(t, p) {
  * Returns { calls, unresolved, wrappers } where calls are
  * { kind: 'doc'|'invoke', path?, anyPrefix?, name?, op?, file, line, confidence, privileged }.
  */
-export function scanFirebaseFile(file, src, { consts = new Map(), privileged = false, invokeWrappers = [] } = {}) {
+export function scanFirebaseFile(file, src, { consts = new Map(), privileged = false, invokeWrappers = [], pathWrappers = [] } = {}) {
   const t = maskCode(src);
   const line = lineIndex(t);
   const isDart = file.endsWith('.dart');
@@ -332,6 +332,29 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
     // HTTP functions called by URL.
     for (const u of t.matchAll(/cloudfunctions\.net\/([A-Za-z][\w-]*)/g)) calls.push({ kind: 'invoke', name: u[1], http: true, file, line: line(u.index), confidence: 'extracted', privileged: priv });
   }
+  // Configured path wrappers: `docAt('users', uid)`, `new FirestoreDoc('apps', 'public')`, `query({ collectionId: 'x' })`.
+  for (const name of pathWrappers) {
+    const re = new RegExp(String.raw`(?<![\w$.])${name.replace(/\$/g, '\\$')}\s*\(`, 'g');
+    let m;
+    while ((m = re.exec(t))) {
+      const open = m.index + m[0].length - 1;
+      const end = closeOf(t, open);
+      if (/^\s*(?:async\s*)?(?:\{|=>)/.test(t.slice(end, end + 12))) continue; // the helper's own declaration
+      const args = splitArgs(t.slice(open + 1, end - 1));
+      const at = line(m.index);
+      const expr = t.slice(m.index, end).replace(/\s+/g, ' ').slice(0, 160);
+      let segs = null;
+      const obj = args[0] && args[0].startsWith('{') ? /\b(?:collectionId|collectionPath|collection|path)\s*:\s*(['"`][^'"`]*['"`])/.exec(args[0]) : null;
+      if (obj) segs = literalPath(obj[1]);
+      else if (args.length && argPath(args[0])) {
+        segs = [];
+        for (const a of args) { const p = argPath(a); if (p) segs.push(...p); else if (/^[\w$.?!()]+$/.test(a) && segs.length % 2 === 1) segs.push('*'); else break; }
+      }
+      if (!segs || !segs.length) { unresolved.push({ kind: 'firestore', file, line: at, expr, privileged: priv, via: name }); continue; }
+      if (segs.length % 2 === 1) segs.push('*');
+      calls.push({ kind: 'doc', path: segs, anyPrefix: false, file, line: at, confidence: 'inferred', privileged: priv, via: name });
+    }
+  }
   // Configured invoke wrappers: `callFunction('name', ...)`.
   for (const w of invokeWrappers) {
     if (w.local && w.file !== file) continue;
@@ -357,7 +380,7 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
  * Scan files (relative to root). `serverDirs`: Cloud Functions sources, whose Firestore access goes
  * through the Admin SDK and bypasses rules. Two passes: constants and invoke wrappers first.
  */
-export function scanFirebase(root, files, { serverDirs = [], wrappers = [] } = {}) {
+export function scanFirebase(root, files, { serverDirs = [], wrappers = [], pathWrappers = [] } = {}) {
   const texts = new Map();
   const failed = [];
   for (const f of files) {
@@ -374,7 +397,7 @@ export function scanFirebase(root, files, { serverDirs = [], wrappers = [] } = {
   const first = new Map();
   const found = [...wrappers.map((name) => ({ name, arg: 0, local: false }))];
   for (const [f, src] of texts) {
-    const r = scanFirebaseFile(f, src, { consts, privileged: isServer(f) });
+    const r = scanFirebaseFile(f, src, { consts, privileged: isServer(f), pathWrappers: pathWrappers.filter((w) => src.includes(w)) });
     first.set(f, r);
     found.push(...r.wrappers);
   }
@@ -383,7 +406,7 @@ export function scanFirebase(root, files, { serverDirs = [], wrappers = [] } = {
   for (const [f, src] of texts) {
     let r = first.get(f);
     const mine = found.filter((w) => !w.local || w.file === f);
-    if (mine.length && mine.some((w) => src.includes(w.name))) r = scanFirebaseFile(f, src, { consts, privileged: isServer(f), invokeWrappers: mine });
+    if (mine.length && mine.some((w) => src.includes(w.name))) r = scanFirebaseFile(f, src, { consts, privileged: isServer(f), invokeWrappers: mine, pathWrappers: pathWrappers.filter((w) => src.includes(w)) });
     calls.push(...r.calls);
     unresolved.push(...r.unresolved);
   }

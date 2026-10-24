@@ -6,7 +6,7 @@ import { COLORWAYS } from './colorways.js';
 
 /** @typedef {{
  *   include: string[], exclude: string[], migrations: string, functionsDir: string,
- *   wrappers: { rpc: string[], from: string[], invoke: string[] },
+ *   wrappers: { rpc: string[], from: string[], invoke: string[], firestore: string[] },
  *   supabaseDefaultGrants: 'auto'|'legacy'|'opt-in'|boolean|null,
  *   ignore: { functions: string[], edgeFunctions: string[], tables: string[], rpcs: string[] }
  * }} Config */
@@ -37,7 +37,9 @@ export const DEFAULTS = {
   functionsDir: null,
   // Names of your own helper functions that take an RPC / table / edge function name
   // as their first argument, e.g. a local `rpc('name')` wrapper.
-  wrappers: { rpc: [], from: [], invoke: [] },
+  // Firebase: `invoke` also names helpers taking a callable's name; `firestore` names helpers whose
+  // string arguments are a Firestore path (`docAt('users', id)`) or that take { collectionId: 'x' }.
+  wrappers: { rpc: [], from: [], invoke: [], firestore: [] },
   // Which default privileges new objects in `public` get (on top of Postgres' global EXECUTE to PUBLIC):
   //   "legacy"  Supabase's per-schema grants to anon/authenticated/service_role on new tables and
   //             functions in public (projects created before the 2026 change; true means this),

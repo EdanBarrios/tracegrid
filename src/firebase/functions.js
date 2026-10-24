@@ -2,7 +2,7 @@
 // `export * from` and `export { a } from`), classified as callable, HTTP or trigger.
 import fs from 'node:fs';
 import path from 'node:path';
-import { maskCode } from './scan.js';
+import { maskCode, splitArgs, closeOf } from './scan.js';
 import { lineIndex } from './rules.js';
 
 const KINDS = [
@@ -58,6 +58,7 @@ function readModule(root, file) {
   const defs = new Map();
   const exported = new Map();
   const reexports = [];
+  const groupRefs = [];
   // Top-level declarations only (column 0): a `const` inside a handler must not cut its body short.
   const starts = [...t.matchAll(/^(?:(export\s+)?(?:const|let|var)\s+([\w$]+)|exports\.([\w$]+)|module\.exports\.([\w$]+))\s*(?::[^=\n]+)?=(?!=)\s*/gm)];
   for (let k = 0; k < starts.length; k++) {
@@ -69,6 +70,22 @@ function readModule(root, file) {
     const head = body.slice(0, 600);
     const req = /^require\(\s*(['"])([^'"]+)\1\s*\)\s*(?:;|$)/m.exec(body.split('\n')[0]);
     if (req && isExport) { reexports.push({ all: true, ns: name, spec: req[2] }); continue; }
+    // A group as an object literal: `export const admin = { ban: onCall(...), audit }` deploys `admin-ban`, `admin-audit`.
+    if (isExport && body.startsWith('{')) {
+      const obj = body.slice(1, closeOf(body, 0) - 1);
+      let off = from + 1;
+      for (const entry of splitArgs(obj)) {
+        const at = t.indexOf(entry, off);
+        if (at >= 0) off = at + entry.length;
+        const kv = /^([\w$]+|(['"])[\w$-]+\2)\s*(?::\s*([\s\S]+))?$/.exec(entry);
+        if (!kv) continue;
+        const key = kv[1].replace(/['"]/g, '');
+        if (kv[3] === undefined) { groupRefs.push([`${name}-${key}`, key]); continue; }
+        const k = (KINDS.find(([, re]) => re.test(kv[3].slice(0, 600))) || [])[0];
+        if (k) { defs.set(`${name}-${key}`, { kind: k, line: line(at >= 0 ? at : m.index), body: kv[3] }); exported.set(`${name}-${key}`, `${name}-${key}`); } else if (/^[\w$]+$/.test(kv[3].trim())) groupRefs.push([`${name}-${key}`, kv[3].trim()]);
+      }
+      continue;
+    }
     const kind = (KINDS.find(([, re]) => re.test(head)) || [])[0];
     if (!kind) { if (isExport && /^[\w$]+\s*;?\s*$/m.test(body.split('\n')[0])) defs.set(name, { alias: /^[\w$]+/.exec(body)[0], line: line(m.index) }); else continue; } else {
       const trig = kind === 'trigger' ? /(?:document|ref|path)\s*\(?\s*:?\s*(['"`])([^'"`]+\/[^'"`]*)\1/.exec(head) || /\(\s*(['"`])([^'"`]+\/[^'"`]*)\1/.exec(head) : null;
@@ -85,6 +102,7 @@ function readModule(root, file) {
   const local = [];
   for (const m of t.matchAll(/export\s*\{([^}]*)\}(?!\s*from)/g)) for (const [orig, as] of parts(m[1])) local.push([as || orig, orig]);
   for (const m of t.matchAll(/module\.exports\s*=\s*\{([^}]*)\}/g)) for (const [key, val] of parts(m[1])) local.push([key, val || key]);
+  for (const [as, orig] of groupRefs) if (defs.has(orig)) exported.set(as, orig);
   for (const [as, orig] of local) {
     if (defs.has(orig)) exported.set(as, orig);
     else if (imports.has(orig)) reexports.push({ name: imports.get(orig).name, as, spec: imports.get(orig).spec });

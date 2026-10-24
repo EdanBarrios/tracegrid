@@ -315,3 +315,34 @@ exports.billing = require('./billing');`,
     assert.deepEqual(listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]).map((f) => f.name), ['billing-charge', 'customToken']);
   } finally { rm(d); }
 });
+
+test('listCloudFunctions: groups written as object literals', () => {
+  const d = project({
+    'functions/package.json': '{}',
+    'functions/src/index.ts': `const audit = onCall(async (r) => r.auth);
+export const admin = {
+  ban: onCall(async (request) => { if (!request.auth) throw 1; }),
+  'set-role': onCall(async () => 1),
+  audit,
+  helper: 3,
+};`,
+  });
+  try {
+    const fns = listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]);
+    assert.deepEqual(fns.map((f) => f.name), ['admin-audit', 'admin-ban', 'admin-set-role']);
+    assert.ok(missingAuthCheck(fns.find((f) => f.name === 'admin-set-role').body));
+    assert.equal(missingAuthCheck(fns.find((f) => f.name === 'admin-ban').body), null);
+  } finally { rm(d); }
+});
+
+test('scanFirebaseFile: configured Firestore path wrappers', () => {
+  const src = `class Doc { constructor(...p) {} }
+const a = new FirestoreDoc('apps', 'public', 'settings');
+const b = docAt('users', uid);
+const c = buildQuery({ collectionId: 'players', where: 1 });
+const d = docAt(someName);
+function docAt(col, id) { return 1; }`;
+  const r = scanFirebaseFile('src/x.js', src, { pathWrappers: ['FirestoreDoc', 'docAt', 'buildQuery'] });
+  assert.deepEqual(r.calls.map((c) => [c.path.join('/'), c.via]), [['apps/public/settings/*', 'FirestoreDoc'], ['users/*', 'docAt'], ['players/*', 'buildQuery']]);
+  assert.deepEqual(r.unresolved.map((u) => u.via), ['docAt']);
+});
