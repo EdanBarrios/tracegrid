@@ -22,6 +22,11 @@ export const DEFAULTS = {
   // Directory names skipped when they sit at the project root or next to a package.json (build
   // output and native projects). The same names deeper in source (src/features/build/) are scanned.
   outputDirs: ['dist', 'build', 'out', 'ios', 'android', 'coverage', 'storybook-static'],
+  // Which backend to check: "auto" (Supabase when a supabase/ project exists, else Firebase when
+  // firebase.json does), "supabase" or "firebase".
+  platform: 'auto',
+  // Firebase: the firebase.json that names the rules files and functions codebases.
+  firebaseJson: null,
   // The Supabase project directory (the one holding config.toml, migrations/ and functions/).
   // Auto-detected: the only **/supabase/config.toml (or **/supabase/migrations) in the project.
   // Colourway baked into graph.html as its default: graphite-amber, signal, mono or mint (--colorway overrides).
@@ -98,7 +103,7 @@ export function validatePaths(c, root, file = 'config') {
       if (path.isAbsolute(g) || /^[A-Za-z]:/.test(g) || g.split('/').includes('..')) bad(`${k}: "${g}" points outside the project (no absolute paths or "..")`);
     }
   }
-  for (const k of ['supabaseDir', 'migrations', 'functionsDir']) {
+  for (const k of ['supabaseDir', 'migrations', 'functionsDir', 'firebaseJson']) {
     if (c[k] == null) continue;
     if (typeof c[k] !== 'string' || !c[k]) bad(`${k} must be a path relative to the project`);
     if (path.isAbsolute(c[k]) || !isInside(root, path.resolve(root, c[k]))) bad(`${k}: "${c[k]}" is outside the project root (".." and absolute paths are not allowed)`);
@@ -122,6 +127,7 @@ export function validateConfig(c, file = 'config') {
   }
   if (c.colorway != null && !COLORWAYS.includes(c.colorway)) bad(`colorway: unknown colourway ${JSON.stringify(String(c.colorway)).slice(0, 60)} (expected ${COLORWAYS.join(', ')})`);
   if (!Array.isArray(c.plugins)) bad('plugins must be an array of paths');
+  if (!['auto', 'supabase', 'firebase'].includes(c.platform)) bad('platform must be "auto", "supabase" or "firebase"');
   if (![null, 'auto', true, false, 'legacy', 'opt-in'].includes(c.supabaseDefaultGrants)) bad('supabaseDefaultGrants must be "auto", "legacy", "opt-in", true or false');
   for (const [t, l] of Object.entries(c.sarifLevels || {})) {
     if (!['fix', 'review', 'info'].includes(t)) bad(`sarifLevels.${t}: unknown tier (expected fix, review, info)`);

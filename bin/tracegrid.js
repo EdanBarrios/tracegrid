@@ -137,10 +137,13 @@ async function main() {
 
   const s = r.stats;
   const pj = r.project;
-  say(`Supabase project: ${pj.supabaseDir} (${pj.how}${pj.configToml ? '' : ', no config.toml'}); migrations ${pj.migrations}, functions ${pj.functionsDir}`);
+  const fb = r.platform === 'firebase';
+  if (fb) say(`Firebase project: ${pj.configFile}; rules ${pj.rules.map((x) => x.file).join(', ') || '(none)'}; functions ${pj.functions.map((f) => f.dir).join(', ') || '(none)'}`);
+  else say(`Supabase project: ${pj.supabaseDir} (${pj.how}${pj.configToml ? '' : ', no config.toml'}); migrations ${pj.migrations}, functions ${pj.functionsDir}`);
   const roots = pj.codeRoots.slice(0, 8).map((x) => `${x.dir === '.' ? '(root)' : x.dir + '/'} ${x.files}`).join(', ');
   say(`Code: ${s.files_scanned} files${roots ? ` (${roots}${pj.codeRoots.length > 8 ? ', ...' : ''})` : ''}`);
-  say(`${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
+  if (fb) say(`${s.call_sites} call sites (${s.unresolved} unresolved), ${s.cloud_functions} Cloud Functions; ${s.rule_paths} rule paths, ${s.allows} allow statements (${s.rules_unparsed} not understood)`);
+  else say(`${s.call_sites} call sites (${s.unresolved} unresolved), ${s.edge_functions} edge functions; schema from ${r.source === 'catalog' ? `the database catalog (${s.functions} functions, ${s.policies} policies)` : `${s.migrations} migrations (${s.sql_unparsed} statements not understood)`}`);
   const w = Math.max(...r.rules.map((x) => x.id.length)) + 2;
   // Per rule: the count, split by the level each finding actually has (a rule's findings can be
   // downgraded, e.g. errors to warnings when dynamic calls could reach them).
