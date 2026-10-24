@@ -118,6 +118,12 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
         node(id, 'table', label, { service: 'firestore', path: c.path, missing: true, ...(hits.length ? { closedBy: hits[0].at } : {}) });
         edge(`file:${c.file}`, id, 'from', c.confidence, at, c.op);
       }
+    } else if (c.kind === 'storage') {
+      // Storage rules match object paths; link to every rule path that covers this one.
+      const hits = ruleNodes.filter((n) => n.service === 'storage' && pathMatches(n.path, c.path));
+      if (!hits.length) continue;
+      fileNode(c.file);
+      for (const n of hits) edge(`file:${c.file}`, n.id, rel('storage', c), hits.length > 1 && c.path.includes('*') ? 'ambiguous' : c.confidence, at);
     } else if (c.kind === 'invoke') {
       fileNode(c.file);
       if (!fnNames.has(c.name)) node(`edge:${c.name}`, 'edge_function', c.name, { missing: true });
@@ -173,7 +179,7 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
   const rtdbUnlisted = ['database.rules.json', 'firebase.rules.json'].filter((f) => !project.database.some((d) => d.rules === f) && fs.existsSync(path.join(root, f)));
   if (rtdbUnlisted.length && !project.database.length) notices.push(`${rtdbUnlisted.join(', ')} exists but ${project.configFile} has no "database" entry, so it is not deployed by \`firebase deploy\` and was not checked.`);
 
-  const distinct = (pred) => new Set(code.calls.filter(pred).map((c) => (c.kind === 'doc' ? c.path.join('/') : c.name))).size;
+  const distinct = (pred) => new Set(code.calls.filter(pred).map((c) => (c.path ? c.path.join('/') : c.name))).size;
   const stats = {
     files_scanned: files.length,
     call_sites: code.calls.length,

@@ -346,3 +346,10 @@ function docAt(col, id) { return 1; }`;
   assert.deepEqual(r.calls.map((c) => [c.path.join('/'), c.via]), [['apps/public/settings/*', 'FirestoreDoc'], ['users/*', 'docAt'], ['players/*', 'buildQuery']]);
   assert.deepEqual(r.unresolved.map((u) => u.via), ['docAt']);
 });
+
+test('scanFirebaseFile: Storage references from Dart and web', () => {
+  const dart = "final r = FirebaseStorage.instance.ref('avatars/$uid').child('thumb.png');\nfinal s = _storage.ref().child('uploads').child(name);\nfinal x = someRef.child('nope');";
+  assert.deepEqual(scanFirebaseFile('lib/a.dart', dart).calls.map((c) => c.path.join('/')), ['avatars/*/thumb.png', 'uploads/*']);
+  const web = "import { getStorage, ref } from 'firebase/storage';\nconst storage = getStorage();\nuploadBytes(ref(storage, `posts/${id}/cover.jpg`), f);\nconst vueRef = ref(0);";
+  assert.deepEqual(scanFirebaseFile('src/a.ts', web).calls.filter((c) => c.kind === 'storage').map((c) => c.path.join('/')), ['posts/*/cover.jpg']);
+});

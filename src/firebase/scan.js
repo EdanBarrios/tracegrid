@@ -296,6 +296,39 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
     }
   }
 
+  // --- Storage: FirebaseStorage.instance.ref('a').child('b') (Dart, v8), ref(storage, 'a/b') (web v9) ---
+  if (/storage/i.test(t)) {
+    const storageCall = (start, segs, end) => {
+      // `.child(x)` continuations extend the path; a dynamic child is one unknown segment.
+      for (;;) {
+        const nx = /^\s*\.\s*child\s*\(/.exec(t.slice(end, end + 200));
+        if (!nx) break;
+        const open = end + nx[0].length - 1;
+        const close = closeOf(t, open);
+        const a = splitArgs(t.slice(open + 1, close - 1))[0] || '';
+        segs.push(...(argPath(a) || ['*']));
+        end = close;
+      }
+      if (segs.length) calls.push({ kind: 'storage', path: segs, file, line: line(start), confidence: segs.includes('*') ? 'inferred' : 'extracted', privileged: priv });
+    };
+    for (const m of t.matchAll(/\.\s*ref\s*\(/g)) {
+      if (!/storage/i.test(receiverBefore(t, m.index))) continue;
+      const open = m.index + m[0].length - 1;
+      const end = closeOf(t, open);
+      const a = splitArgs(t.slice(open + 1, end - 1))[0];
+      storageCall(m.index, a ? argPath(a) || ['*'] : [], end);
+    }
+    if (!isDart) {
+      for (const m of t.matchAll(/(?<![\w$.])ref\s*\(/g)) {
+        const open = m.index + m[0].length - 1;
+        const end = closeOf(t, open);
+        const args = splitArgs(t.slice(open + 1, end - 1));
+        if (args.length < 1 || !/storage/i.test(args[0])) continue;
+        storageCall(m.index, args[1] ? argPath(args[1]) || ['*'] : [], end);
+      }
+    }
+  }
+
   // --- Callable functions: httpsCallable('name') (Dart), httpsCallable(functions, 'name') (JS) ---
   if (usesFunctions) {
     const re = /\bhttpsCallable(FromUrl|FromURL)?\s*\(/g;
