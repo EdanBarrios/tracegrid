@@ -77,7 +77,8 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
         n.at = `${r.file}:${a.line}`;
         // Grants that cover the whole database: a root recursive wildcard (Firestore), the root (RTDB cascades).
         // (Storage: a catch-all is how public asset buckets are written; its reads and writes are judged on their own.)
-        n.rootCatchAll = r.service === 'rtdb' ? a.path.length === 0 : r.service === 'firestore' && a.path.length > 0 && isRecursive(a.path[0]);
+        // `/{path=**}/comments/{id}` (a collection group) is not a catch-all: only a bare `/{document=**}` is.
+        n.rootCatchAll = r.service === 'rtdb' ? a.path.length === 0 : r.service === 'firestore' && a.path.length === 1 && isRecursive(a.path[0]);
         ruleNodes.push(n);
       }
       if (r.service === 'firestore') {

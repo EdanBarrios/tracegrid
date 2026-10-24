@@ -404,8 +404,9 @@ export function authzRefs(text) {
     const path = norm.map((x) => (x.startsWith('$(') ? '*' : x));
     if (m[1].startsWith('exists')) { out.push({ path, field: null, self }); continue; }
     // `.data.role`, `.data['role']`, or `(get(...).data).role` once a helper returning `.data` is inlined.
-    const after = /^\s*\.\s*data\s*\)*\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*['"]([^'"]+)['"]\s*\])/.exec(text.slice(close + 1, close + 120));
-    if (after) out.push({ path, field: after[1] || after[2], self });
+    // `.data.get('role', 'user')` is the map's get(): the field is its first argument.
+    const after = /^\s*\.\s*data\s*\)*\s*(?:\.\s*get\s*\(\s*['"]([^'"]+)['"]|\.\s*([A-Za-z_]\w*)(?!\s*\()|\[\s*['"]([^'"]+)['"]\s*\])/.exec(text.slice(close + 1, close + 120));
+    if (after) out.push({ path, field: after[1] || after[2] || after[3], self });
   }
   return out;
 }

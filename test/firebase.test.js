@@ -408,3 +408,62 @@ test('duplicateGroups: renamed copies group together, different handlers do not'
     { name: 'other', body: "onCall(async (r) => { const s = await db.collection('x').where('a', '==', r.data.a).get(); return s.docs.map((d) => d.data()).filter(Boolean).slice(0, 10).concat([1, 2, 3]).reverse().join(','); })" }]);
   assert.deepEqual(g.map((x) => x.names), [['addAdmin', 'addCaptain']]);
 });
+
+test('analyze: a collection-group rule is not a catch-all', async () => {
+  const d = project({ 'firebase.json': '{}',
+    'firestore.rules': "service cloud.firestore { match /databases/{db}/documents { match /{path=**}/comments/{id} { allow read: if true; } } }",
+    'web/a.js': "import { getFirestore, collectionGroup } from 'firebase/firestore';\ngetDocs(collectionGroup(getFirestore(), 'comments'));" });
+  try {
+    const r = await analyze(d);
+    assert.deepEqual(r.findings.map((f) => `${f.tier} ${f.rule}`), ['review firebase-rules-public-read']);
+  } finally { rm(d); }
+});
+
+test('scanFirebase: reference helpers (Dart extensions, getters, JS helper functions) resolve at their call sites', async () => {
+  const { scanFirebase } = await import('../src/firebase/scan.js');
+  const d = project({
+    'lib/refs.dart': `extension FirestoreX on FirebaseFirestore {
+  CollectionReference usersRef() => collection('users');
+  CollectionReference shareLinksRef() => collection('shareLinks');
+  CollectionReference participantsRef(String g) => collection('groups').doc(g).collection('participants');
+}`,
+    'lib/use.dart': `class S { Future<void> f() async {
+  await FirebaseFirestore.instance.shareLinksRef().doc(id).get();
+  await FirebaseFirestore.instance.participantsRef(g).get();
+} }`,
+    'src/config.ts': `const db = getFirestore();
+export const thoughtsColRef = (userId: string) => {
+  return collection(db, 'users', userId, 'thoughts') as CollectionReference<T>;
+};`,
+    'src/page.tsx': "import { thoughtsColRef } from './config';\nonSnapshot(query(thoughtsColRef(uid), orderBy('t')), cb);",
+  });
+  try {
+    const r = scanFirebase(d, ['lib/refs.dart', 'lib/use.dart', 'src/config.ts', 'src/page.tsx']);
+    const used = (file) => [...new Set(r.calls.filter((c) => c.file === file).map((c) => c.path.join('/')))].sort();
+    assert.deepEqual(used('lib/use.dart'), ['groups/*/participants/*', 'shareLinks/*']);
+    assert.deepEqual(used('src/page.tsx'), ['users/*/thoughts/*']);
+  } finally { rm(d); }
+});
+
+test('listCloudFunctions: namespace re-exports (member and destructuring)', () => {
+  const d = project({
+    'functions/package.json': '{}',
+    'functions/src/index.ts': "import * as cat from './cat';\nconst auth = require('./auth');\nexport const addFiles = cat.addFiles;\nexport const { signUp, wipe: wipeUser } = auth;",
+    'functions/src/cat.ts': 'export const addFiles = onCall(async (r) => r.auth);',
+    'functions/src/auth.js': 'exports.signUp = onCall((d, c) => c.auth);\nexports.wipe = onCall((d, c) => c.auth);',
+  });
+  try {
+    assert.deepEqual(listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]).map((f) => f.name), ['addFiles', 'signUp', 'wipeUser']);
+  } finally { rm(d); }
+});
+
+test('listCloudFunctions: members of an imported object of functions', () => {
+  const d = project({
+    'functions/package.json': '{}',
+    'functions/src/index.ts': "import { cat } from './cat';\nexport const addFiles = cat.addFiles;",
+    'functions/src/cat.ts': 'const addFiles = functions.https.onCall(async (d, c) => c.auth);\nconst unused = functions.https.onCall(async () => 1);\nexport const cat = {\n  addFiles,\n  unused,\n};',
+  });
+  try {
+    assert.deepEqual(listCloudFunctions(d, [{ dir: 'functions', codebase: 'default' }]).map((f) => f.name), ['addFiles']);
+  } finally { rm(d); }
+});

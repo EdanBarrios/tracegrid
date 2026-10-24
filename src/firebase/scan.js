@@ -124,7 +124,10 @@ const ROOT_RECEIVER = /(?:^|[.\s(])(?:FirebaseFirestore\.instance(?:For\([^)]*\)
 const SERVER_HINT = /from\s+['"]firebase-admin|require\(\s*['"]firebase-admin|from\s+['"]firebase-functions|require\(\s*['"]firebase-functions/;
 
 /** The expression immediately before offset `p` (a receiver like `FirebaseFirestore.instance` or `_db`). */
-function receiverBefore(t, p) {
+function receiverBefore(t, p) { return receiverBounds(t, p).text; }
+
+/** The receiver expression before offset `p` and where it starts. */
+function receiverBounds(t, p) {
   const back = (k) => { while (k > 0 && /\s/.test(t[k - 1])) k--; return k; };
   let k = back(p);
   for (;;) {
@@ -140,7 +143,24 @@ function receiverBefore(t, p) {
     if (t[d - 1] !== '.') break;
     k = back(d - 1);
   }
-  return t.slice(k, p).replace(/\s+/g, '');
+  return { text: t.slice(k, p).replace(/\s+/g, ''), start: k };
+}
+
+/**
+ * The function or getter whose body is the expression starting at `start`, if any:
+ * `CollectionReference usersRef() => `, `get users => `, `const usersCol = (id) => `,
+ * `function usersCol() { return `, `Query<X> feed() { return `.
+ */
+const HELPER_DEF = [
+  /(?:^|[\s;{}(,])(?:get\s+)?([A-Za-z_$][\w$]*)\s*(?:<[^<>()]*>)?\s*(?:\([^()]*\))?\s*(?:async\s*)?=>\s*\(?\s*$/,
+  /(?:^|[\s;{}(,])([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^()]*\)|[\w$]+)\s*(?::\s*[^=;{}]+?)?\s*=>\s*\{\s*return\s+\(?\s*$/,
+  /(?:^|[\s;{}(,])([A-Za-z_$][\w$]*)\s*\([^()]*\)\s*(?::\s*[^{};]+)?(?:async\s*)?\{\s*return\s+\(?\s*$/,
+];
+const NOT_HELPER = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'function', 'async', 'await', 'then', 'map', 'forEach', 'build', 'main']);
+function helperAt(t, start) {
+  const before = t.slice(Math.max(0, start - 300), start);
+  for (const re of HELPER_DEF) { const m = re.exec(before); if (m && !NOT_HELPER.has(m[1])) return m[1]; }
+  return null;
 }
 
 /**
@@ -148,13 +168,14 @@ function receiverBefore(t, p) {
  * Returns { calls, unresolved, wrappers } where calls are
  * { kind: 'doc'|'invoke', path?, anyPrefix?, name?, op?, file, line, confidence, privileged }.
  */
-export function scanFirebaseFile(file, src, { consts = new Map(), privileged = false, invokeWrappers = [], pathWrappers = [] } = {}) {
+export function scanFirebaseFile(file, src, { consts = new Map(), privileged = false, invokeWrappers = [], pathWrappers = [], refHelpers = new Map() } = {}) {
   const t = maskCode(src);
   const line = lineIndex(t);
   const isDart = file.endsWith('.dart');
   const calls = [];
   const unresolved = [];
   const wrappers = [];
+  const helpers = [];
   const priv = privileged || (!isDart && SERVER_HINT.test(t));
   const usesFirestore = /firestore/i.test(t);
   const usesFunctions = /httpsCallable|cloudfunctions\.net/i.test(t);
@@ -169,7 +190,11 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
   };
 
   // --- Firestore chains: .collection(...).doc(...).collection(...) (Dart, v8/compat, admin) ---
-  const chainRe = /\.\s*(collection|collectionGroup|doc|document)\s*\(/g;
+  // Inside `extension X on FirebaseFirestore`, `collection('x')` has the instance as implicit receiver.
+  const bareRoot = isDart && /\bextension\s+\w+\s+on\s+FirebaseFirestore\b/.test(t);
+  const chainRe = bareRoot ? /(?:\.\s*|(?<![\w$.]))(collection|collectionGroup|doc|document)\s*\(/g : /\.\s*(collection|collectionGroup|doc|document)\s*\(/g;
+  /** A known reference helper called as `name(...)` at the end of `expr`: its path. */
+  const helperOf = (expr) => { const h = /([\w$]+)\s*\((?:[^()]|\([^()]*\))*\)$/.exec(expr); return h && refHelpers.get(h[1]); };
   const resolving = new Set();
   /** Segments for a chain whose receiver is the identifier `name`, from its assignment in this file. */
   const resolveVar = (name, before) => {
@@ -213,10 +238,13 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
       const continues = cur && cur.ok && /^\s*$/.test(t.slice(cur.end, m.index));
       if (!continues) {
         if (cur) out.push(cur);
-        const recv = receiverBefore(t, m.index);
-        cur = { segs: [], anyPrefix: false, ok: true, start: m.index, end, recv, method };
+        const bare = !m[0].startsWith('.');
+        const rb = bare ? { text: '', start: m.index } : receiverBounds(t, m.index);
+        const recv = rb.text;
+        cur = { segs: [], anyPrefix: false, ok: true, start: m.index, defStart: rb.start, end, recv, method };
+        const hp = !bare && helperOf(recv);
         if (method === 'collectionGroup') cur.anyPrefix = true;
-        else if (!ROOT_RECEIVER.test(recv) && !/Firestore/.test(recv)) {
+        else if (hp) { cur.segs = [...hp.segs]; cur.anyPrefix = hp.anyPrefix; } else if (!bare && !ROOT_RECEIVER.test(recv) && !/Firestore/.test(recv)) {
           const id = /([\w$]+)$/.exec(recv);
           const r = id ? resolveVar(id[1], m.index) : null;
           // Not a Firestore instance and not resolvable: the parent path is unknown.
@@ -251,6 +279,9 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
       if (c.endsOn === 'collection' || (!c.anyPrefix && segs.length % 2 === 1)) segs.push('*');
       const after = /^\s*\.\s*(\w+)/.exec(t.slice(c.end, c.end + 80));
       calls.push({ kind: 'doc', path: segs, anyPrefix: c.anyPrefix, op: after && OPS[after[1]], file, line: at, confidence: c.anyPrefix ? 'inferred' : 'extracted', privileged: priv });
+      // A function or getter returning this reference: calls to it reach the same path.
+      const hn = !after && helperAt(t, c.defStart);
+      if (hn) helpers.push({ name: hn, segs: c.segs, anyPrefix: c.anyPrefix, path: segs, file });
     }
     // --- Web v9 modular: collection(db, 'a', id, 'b'), doc(db, 'a/b'), collectionGroup(db, 'x') ---
     if (!isDart) {
@@ -266,7 +297,7 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
         const res = { segs: [], anyPrefix: mm[1] === 'collectionGroup', method: mm[1], ok: true, start, end };
         const first = args[0];
         const inner = /^(collection|collectionGroup|doc)\s*\(/.test(first) ? modular(open + 1 + t.slice(open + 1).indexOf(first)) : null;
-        if (inner) { nested.add(inner.start); res.segs = inner.segs; res.anyPrefix = inner.anyPrefix; if (!inner.ok) { res.ok = false; res.expr = inner.expr; } } else if (!ROOT_RECEIVER.test(first) && !/firestore|db/i.test(first)) {
+        if (inner) { nested.add(inner.start); res.segs = inner.segs; res.anyPrefix = inner.anyPrefix; if (!inner.ok) { res.ok = false; res.expr = inner.expr; } } else if (helperOf(first)) { const hp = helperOf(first); res.segs = [...hp.segs]; res.anyPrefix = hp.anyPrefix; } else if (!ROOT_RECEIVER.test(first) && !/firestore|db/i.test(first)) {
           const r = /^[\w$]+$/.test(first) ? resolveVar(first, start) : null;
           if (r) { res.segs = [...r.segs]; res.anyPrefix = r.anyPrefix; } else res.anyPrefix = true;
         }
@@ -292,6 +323,9 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
         const segs = [...c.segs];
         if (c.endsOn === 'collection' || (!c.anyPrefix && segs.length % 2 === 1)) segs.push('*');
         calls.push({ kind: 'doc', path: segs, anyPrefix: c.anyPrefix, file, line: at, confidence: c.anyPrefix ? 'inferred' : 'extracted', privileged: priv });
+        const tail = t.slice(c.end, c.end + 40);
+        const hn = !/^\s*\.\s*\w/.test(tail) && helperAt(t, c.start);
+        if (hn) helpers.push({ name: hn, segs: c.segs, anyPrefix: c.anyPrefix, path: segs, file });
       }
     }
   }
@@ -365,6 +399,17 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
     // HTTP functions called by URL.
     for (const u of t.matchAll(/cloudfunctions\.net\/([A-Za-z][\w-]*)/g)) calls.push({ kind: 'invoke', name: u[1], http: true, file, line: line(u.index), confidence: 'extracted', privileged: priv });
   }
+  // Calls to reference helpers found in the first pass (`usersRef()`, `thoughtsColRef(uid)`).
+  for (const [name, hp] of refHelpers) {
+    if (hp.local && hp.file !== file) continue;
+    const re = new RegExp(String.raw`(?<![\w$])${name.replace(/\$/g, '\\$')}\s*\(`, 'g');
+    let m;
+    while ((m = re.exec(t))) {
+      const end = closeOf(t, m.index + m[0].length - 1);
+      if (/^\s*(?::[^=;{]+)?(?:async\s*)?(?:\{|=>)/.test(t.slice(end, end + 60))) continue; // its declaration
+      calls.push({ kind: 'doc', path: hp.path, anyPrefix: hp.anyPrefix, file, line: line(m.index), confidence: 'inferred', privileged: priv, via: name });
+    }
+  }
   // Configured path wrappers: `docAt('users', uid)`, `new FirestoreDoc('apps', 'public')`, `query({ collectionId: 'x' })`.
   for (const name of pathWrappers) {
     const re = new RegExp(String.raw`(?<![\w$.])${name.replace(/\$/g, '\\$')}\s*\(`, 'g');
@@ -406,7 +451,7 @@ export function scanFirebaseFile(file, src, { consts = new Map(), privileged = f
       }
     }
   }
-  return { calls, unresolved, wrappers };
+  return { calls, unresolved, wrappers, helpers };
 }
 
 /**
@@ -429,17 +474,28 @@ export function scanFirebase(root, files, { serverDirs = [], wrappers = [], path
   const isServer = (f) => serverDirs.some((d) => f === d || f.startsWith(d.replace(/\/?$/, '/')));
   const first = new Map();
   const found = [...wrappers.map((name) => ({ name, arg: 0, local: false }))];
+  const helperDefs = new Map();
   for (const [f, src] of texts) {
     const r = scanFirebaseFile(f, src, { consts, privileged: isServer(f), pathWrappers: pathWrappers.filter((w) => src.includes(w)) });
     first.set(f, r);
     found.push(...r.wrappers);
+    for (const h of r.helpers) { if (!helperDefs.has(h.name)) helperDefs.set(h.name, []); helperDefs.get(h.name).push(h); }
+  }
+  // Reference helpers with one meaning (a name defined twice with different paths is ambiguous).
+  const refHelpers = new Map();
+  for (const [name, defs] of helperDefs) {
+    if (new Set(defs.map((d) => d.path.join('/') + (d.anyPrefix ? '~' : ''))).size !== 1) continue;
+    refHelpers.set(name, { ...defs[0], local: name.startsWith('_') });
   }
   const calls = [];
   const unresolved = [];
   for (const [f, src] of texts) {
     let r = first.get(f);
     const mine = found.filter((w) => !w.local || w.file === f);
-    if (mine.length && mine.some((w) => src.includes(w.name))) r = scanFirebaseFile(f, src, { consts, privileged: isServer(f), invokeWrappers: mine, pathWrappers: pathWrappers.filter((w) => src.includes(w)) });
+    const helpersHere = new Map([...refHelpers].filter(([name, h]) => (!h.local || h.file === f) && src.includes(name)));
+    if ((mine.length && mine.some((w) => src.includes(w.name))) || helpersHere.size) {
+      r = scanFirebaseFile(f, src, { consts, privileged: isServer(f), invokeWrappers: mine, pathWrappers: pathWrappers.filter((w) => src.includes(w)), refHelpers: helpersHere });
+    }
     calls.push(...r.calls);
     unresolved.push(...r.unresolved);
   }

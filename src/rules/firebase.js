@@ -23,7 +23,8 @@ const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 function fieldProtected(text, field) {
   const f = escRe(field);
-  if (new RegExp(String.raw`request\.resource\.data\s*(?:\.\s*${f}(?![\w$])|\[\s*['"]${f}['"]\s*\])`).test(text)) return true;
+  // `(request.resource.data).role` once a helper taking the data as a parameter is inlined.
+  if (new RegExp(String.raw`request\.resource\.data\s*\)*\s*(?:\.\s*${f}(?![\w$])|\[\s*['"]${f}['"]\s*\]|\.\s*get\s*\(\s*['"]${f}['"])`).test(text)) return true;
   if (new RegExp(String.raw`['"]${f}['"]`).test(text)) return true;
   return /\.\s*hasOnly\s*\(/.test(text) && /affectedKeys\s*\(|keys\s*\(/.test(text);
 }
@@ -87,11 +88,12 @@ export const firebaseRules = [
           const ops = ref.self ? ['update', 'create'] : ['update'];
           const min = ref.self ? 'conditional' : 'signed-in';
           // A write only an already privileged caller passes (`allow write: if isAdmin()`) is not escalation.
-          const key = ref.path.join('/');
           // Also privileged: a specific identity (`request.auth.token.email == 'me@x.com'`, `request.auth.uid == 'abc'`)
           // or a custom claim, which only the server can set (`request.auth.token.admin == true`).
-          const needsIt = (atom) => authzRefs(atom).some((x) => x.field === ref.field && x.path.join('/') === key)
-            || /request\.auth\.(?:uid|token\.email)\s*==\s*['"]|['"]\s*==\s*request\.auth\.(?:uid|token\.email)\b/.test(atom)
+          // Any branch that reads a stored privilege (any get() / exists()) needs an already privileged caller:
+          // admins or members managing the field is the design, not escalation.
+          const needsIt = (atom) => authzRefs(atom).length > 0
+            || /request\.auth\.(?:uid|token\.email)\s*(?:==\s*['"]|in\s*\[)|['"]\s*==\s*request\.auth\.(?:uid|token\.email)\b|request\.auth\.token\.email\s*\.\s*matches\s*\(/.test(atom)
             || /request\.auth\.token\.(?!email\b|email_verified\b|firebase\b|sign_in_provider\b|phone_number\b|name\b|picture\b)\w+/.test(atom);
           const open = ops.flatMap((op) => (byOp[op] || []).filter((a) => rankOf(a.cls) >= rankOf(min) && !fieldProtected(a.expanded, ref.field) && passableWithout(a.expanded, needsIt)).map((a) => ({ op, ...a })));
           if (!open.length) continue;

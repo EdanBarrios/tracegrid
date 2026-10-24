@@ -108,6 +108,21 @@ function readModule(root, file) {
     else if (imports.has(orig)) reexports.push({ name: imports.get(orig).name, as, spec: imports.get(orig).spec });
   }
   for (const [name, d] of [...defs]) if (d.alias && imports.has(d.alias)) reexports.push({ name: imports.get(d.alias).name, as: name, spec: imports.get(d.alias).spec });
+  // Namespaces: `import * as cat from './cat'` / `const cat = require('./cat')`, then
+  // `export const add = cat.add;` or `export const { add, remove: drop } = cat;`.
+  const ns = new Map();
+  for (const m of t.matchAll(/import\s*\*\s*as\s+([\w$]+)\s+from\s*(['"])([^'"]+)\2/g)) ns.set(m[1], m[3]);
+  for (const m of t.matchAll(/^(?:const|let|var)\s+([\w$]+)\s*=\s*require\(\s*(['"])([^'"]+)\2\s*\)/gm)) ns.set(m[1], m[3]);
+  for (const m of t.matchAll(/^(?:export\s+const\s+([\w$]+)|exports\.([\w$]+)|module\.exports\.([\w$]+))\s*=\s*([\w$]+)\s*\.\s*([\w$]+)\s*;?\s*$/gm)) {
+    if (ns.has(m[4])) reexports.push({ name: m[5], as: m[1] || m[2] || m[3], spec: ns.get(m[4]) });
+    // A named import of an object of functions (`export const cat = { add, remove }`): its members are
+    // registered as `cat-add` (the object-literal group form) in that module.
+    else if (imports.has(m[4])) reexports.push({ name: `${imports.get(m[4]).name}-${m[5]}`, as: m[1] || m[2] || m[3], spec: imports.get(m[4]).spec });
+  }
+  for (const m of t.matchAll(/^export\s+const\s*\{([^}]*)\}\s*=\s*([\w$]+)\s*;?/gm)) {
+    if (!ns.has(m[2])) continue;
+    for (const [orig, as] of parts(m[1])) reexports.push({ name: orig, as: as || orig, spec: ns.get(m[2]) });
+  }
   return { defs, exported, reexports };
 }
 
