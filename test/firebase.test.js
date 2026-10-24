@@ -353,3 +353,42 @@ test('scanFirebaseFile: Storage references from Dart and web', () => {
   const web = "import { getStorage, ref } from 'firebase/storage';\nconst storage = getStorage();\nuploadBytes(ref(storage, `posts/${id}/cover.jpg`), f);\nconst vueRef = ref(0);";
   assert.deepEqual(scanFirebaseFile('src/a.ts', web).calls.filter((c) => c.kind === 'storage').map((c) => c.path.join('/')), ['posts/*/cover.jpg']);
 });
+
+test('analyze: access fields a user can write on their own document; self-granted membership', async () => {
+  const rules = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return me().role == 'admin' || exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid;
+      allow create: if request.auth.uid == uid && request.resource.data.role == 'member';
+    }
+    match /teams/{t} {
+      allow update: if request.auth.uid == t && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
+    }
+    match /admins/{uid} { allow create: if request.auth.uid == uid; }
+    match /reports/{id} { allow read: if isAdmin() || get(/databases/$(database)/documents/teams/$(resource.data.team)).data.owner == request.auth.uid; }
+  }
+}`;
+  const d = project({ 'firebase.json': '{}', 'firestore.rules': rules,
+    'web/a.js': "import { getFirestore, doc, collection } from 'firebase/firestore';\nconst db = getFirestore();\ndoc(db, 'users', u); doc(db, 'teams', t); doc(db, 'admins', u); collection(db, 'reports');" });
+  try {
+    const r = await analyze(d);
+    const got = r.findings.filter((f) => /self-/.test(f.rule)).map((f) => `${f.tier} ${f.rule} ${f.id}`);
+    // users.role: update names no field (create pins role). teams.owner: allow-listed keys. admins: self-created membership.
+    assert.deepEqual(got, ['fix firestore-self-writable-access-field /users/{uid}.role', 'review firestore-self-grantable-membership /admins/{uid}']);
+    assert.match(r.findings.find((f) => f.rule === 'firestore-self-writable-access-field').message, /^update can set "role"/);
+  } finally { rm(d); }
+});
+
+test('passableWithout: a privilege check alone blocks; OR-ed with ownership it does not', async () => {
+  const { passableWithout } = await import('../src/firebase/rules.js');
+  const admin = (a) => /isAdminCheck/.test(a);
+  assert.equal(passableWithout('signedIn && (isAdminCheck)', admin), false);
+  assert.equal(passableWithout('signedIn && (owner || isAdminCheck)', admin), true);
+  assert.equal(passableWithout('!isAdminCheck', admin), true);
+  assert.equal(passableWithout('owner && false', admin), false);
+});

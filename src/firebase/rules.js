@@ -145,6 +145,43 @@ function balancedCall(e) {
   return false;
 }
 
+/**
+ * The condition with rule functions inlined (parameters replaced by the call's arguments, `let`
+ * bindings by their values), for text checks that need to see what helpers do. Capped in size.
+ */
+export function expand(expr, scope = () => null, { lets = null, depth = 0, stack = [] } = {}) {
+  const MAX = 20000;
+  let e = expr;
+  if (lets) for (const [k, v] of lets) e = e.replace(new RegExp(String.raw`(?<![\w.$])${k}(?![\w$(])`, 'g'), `(${v})`);
+  if (depth > 8) return e.slice(0, MAX);
+  let out = '';
+  let k = 0;
+  const re = /(?<![\w.$])([A-Za-z_]\w*)\s*\(/g;
+  let m;
+  while ((m = re.exec(e))) {
+    const fn = scope(m[1]);
+    if (!fn || stack.includes(m[1])) continue;
+    const open = m.index + m[0].length - 1;
+    let d = 0;
+    let close = open;
+    for (; close < e.length; close++) { if (e[close] === '(') d++; else if (e[close] === ')' && --d === 0) break; }
+    const args = splitTop(e.slice(open + 1, close), ',');
+    let body = fn.ret;
+    const fl = new Map(fn.lets);
+    fn.params.forEach((p, i) => {
+      if (args[i] === undefined) return;
+      const sub = (x) => x.replace(new RegExp(String.raw`(?<![\w.$])${p}(?![\w$])`, 'g'), `(${args[i]})`);
+      body = sub(body);
+      for (const [lk, lv] of fl) fl.set(lk, sub(lv));
+    });
+    out += e.slice(k, m.index) + '(' + expand(body, scope, { lets: fl, depth: depth + 1, stack: [...stack, m[1]] }) + ')';
+    k = close + 1;
+    re.lastIndex = k;
+    if (out.length > MAX) break;
+  }
+  return (out + e.slice(k)).slice(0, MAX);
+}
+
 /** `{ let a = x; let b = y; return z; }` -> { lets: Map, ret }. */
 function parseFunctionBody(body) {
   const lets = new Map();
@@ -268,7 +305,7 @@ export function parseRulesFile(src, { now = new Date() } = {}) {
   const allows = raw.map((a) => {
     const lookup = (name) => { for (let s = a.scope; s; s = s.parent) if (s.fns.has(name)) return s.fns.get(name); return null; };
     const { cls, notes } = classify(a.cond, lookup, { now });
-    return { path: strip(a.path), ops: a.ops, cond: a.cond, cls, notes, line: a.line };
+    return { path: strip(a.path), ops: a.ops, cond: a.cond, cls, notes, line: a.line, expanded: cls === 'closed' ? '' : expand(a.cond, lookup) };
   });
   return { service, allows, errors };
 }
@@ -334,4 +371,61 @@ export function parseDatabaseRules(src, { now = new Date() } = {}) {
   };
   walk(root, []);
   return { allows, errors };
+}
+
+/**
+ * Documents the rules read to decide access: `get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role`
+ * (and getAfter) give { path, field }; `exists(...)` gives { path, field: null }. Path segments are
+ * literals or `*` for `$(...)`; `self` is true when the last one is `$(request.auth.uid)`.
+ */
+export function authzRefs(text) {
+  const out = [];
+  const re = /\b(get|getAfter|exists|existsAfter)\s*\(/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const open = m.index + m[0].length - 1;
+    let d = 0;
+    let close = open;
+    for (; close < text.length; close++) { if (text[close] === '(') d++; else if (text[close] === ')' && --d === 0) break; }
+    const arg = text.slice(open + 1, close).trim();
+    const pm = /^\/databases\/(?:\$\([^)]*\)|[^/]+)\/documents\/(.+)$/.exec(arg);
+    if (!pm) continue;
+    const segs = [];
+    let cur = '';
+    let depth = 0;
+    for (const c of pm[1]) {
+      if (c === '(') depth++;
+      if (c === ')') depth--;
+      if (c === '/' && depth === 0) { segs.push(cur); cur = ''; } else cur += c;
+    }
+    segs.push(cur);
+    const norm = segs.map((x) => x.trim()).filter(Boolean);
+    const self = /^\$\(\s*\(?\s*request\.auth\.uid\s*\)?\s*\)$/.test(norm[norm.length - 1] || '');
+    const path = norm.map((x) => (x.startsWith('$(') ? '*' : x));
+    if (m[1].startsWith('exists')) { out.push({ path, field: null, self }); continue; }
+    // `.data.role`, `.data['role']`, or `(get(...).data).role` once a helper returning `.data` is inlined.
+    const after = /^\s*\.\s*data\s*\)*\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*['"]([^'"]+)['"]\s*\])/.exec(text.slice(close + 1, close + 120));
+    if (after) out.push({ path, field: after[1] || after[2], self });
+  }
+  return out;
+}
+
+/**
+ * Can a caller for whom `holds(atom)` is false still pass `expr`? Atoms are split on top-level
+ * `||` / `&&`; an atom that is `false` fails; an atom `holds` marks (one that needs the privilege
+ * being checked) fails unless negated; anything else may pass.
+ */
+export function passableWithout(expr, holds) {
+  const go = (e, d) => {
+    e = unwrap(e);
+    if (d > 40) return true;
+    const ors = splitTop(e, '||');
+    if (ors.length > 1) return ors.some((x) => go(x, d + 1));
+    const ands = splitTop(e, '&&');
+    if (ands.length > 1) return ands.every((x) => go(x, d + 1));
+    if (e === 'false') return false;
+    if (e.startsWith('!')) return true;
+    return !holds(e);
+  };
+  return go(expr, 0);
 }

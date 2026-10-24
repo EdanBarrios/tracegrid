@@ -8,7 +8,7 @@ import { findFiles, DEFAULTS } from '../config.js';
 import { runRules, makeGraph, TIERS } from '../engine.js';
 import { firebaseRules } from '../rules/firebase.js';
 import { resolveFirebase, readText } from './project.js';
-import { parseRulesFile, parseDatabaseRules, pathMatches, isRecursive, rankOf, OPS } from './rules.js';
+import { parseRulesFile, parseDatabaseRules, pathMatches, isRecursive, rankOf, OPS, authzRefs } from './rules.js';
 import { scanFirebase } from './scan.js';
 import { listCloudFunctions, missingAuthCheck } from './functions.js';
 import { makeSuppressor, codeRoots, SCHEMA_VERSION } from '../analyze.js';
@@ -21,6 +21,7 @@ const FIREBASE_EXCLUDE = ['**/*.g.dart', '**/*.freezed.dart', '**/*.mocks.dart',
 export const FIREBASE_IGNORE = {
   'firebase-rules-public-write': 'tables', 'firebase-rules-open-catch-all': 'tables', 'firebase-rules-signed-in-write': 'tables', 'firebase-rules-public-read': 'tables',
   'firestore-rule-unused': 'tables', 'firestore-path-without-rule': 'tables',
+  'firestore-self-writable-access-field': 'tables', 'firestore-self-grantable-membership': 'tables',
   'uncalled-callable-function': 'edgeFunctions', 'missing-callable-function': 'edgeFunctions', 'callable-without-auth-check': 'edgeFunctions',
 };
 
@@ -57,6 +58,10 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
     if (at && e.at.length < 50) e.at.push(at);
   };
 
+  // Firestore allows by node and operation (expanded conditions, for field-level checks), and the
+  // documents and fields the rules read to decide access.
+  const allowsByNode = new Map();
+  const refs = [];
   const PREFIX = { firestore: '', storage: 'storage:', rtdb: 'rtdb:' };
   const ruleNodes = [];
   let allowCount = 0;
@@ -73,6 +78,12 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
         // (Storage: a catch-all is how public asset buckets are written; its reads and writes are judged on their own.)
         n.rootCatchAll = r.service === 'rtdb' ? a.path.length === 0 : r.service === 'firestore' && a.path.length > 0 && isRecursive(a.path[0]);
         ruleNodes.push(n);
+      }
+      if (r.service === 'firestore') {
+        if (!allowsByNode.has(id)) allowsByNode.set(id, {});
+        const byOp = allowsByNode.get(id);
+        for (const op of a.ops) (byOp[op] = byOp[op] || []).push({ cls: a.cls, expanded: a.expanded || '', at: `${r.file}:${a.line}` });
+        for (const ref of authzRefs(a.expanded || '')) refs.push({ ...ref, at: `${r.file}:${a.line}` });
       }
       for (const op of a.ops) {
         const cur = n.access[op];
@@ -165,7 +176,7 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
 
   // Findings
   const graph = makeGraph([...nodes.values()], [...edges.values()]);
-  const ran = runRules([...firebaseRules, ...plugins], { graph, config: cfg, root, unresolved: code.unresolved, platform: 'firebase', catalog: null }, makeSuppressor(cfg, [], FIREBASE_IGNORE));
+  const ran = runRules([...firebaseRules, ...plugins], { graph, config: cfg, root, unresolved: code.unresolved, platform: 'firebase', catalog: null, firebase: { allowsByNode, refs } }, makeSuppressor(cfg, [], FIREBASE_IGNORE));
   for (const f of ran.findings) f.source = 'firebase-rules';
 
   const scope_problems = [];
