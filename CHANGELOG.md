@@ -3,6 +3,38 @@
 All notable changes. Versions follow semver; while 0.x, minor versions may break the config,
 the rule contract or `graph.json` (whose `schema_version` is bumped when its shape breaks).
 
+## 0.3.0 (unreleased)
+
+Firebase support: Firestore, Storage and Realtime Database Security Rules, Cloud Functions,
+and app code in Dart (Flutter) and JavaScript / TypeScript. Same graph, tiers, report, viewer,
+SARIF, baseline and `--check` as Supabase. See [docs/firebase.md](docs/firebase.md).
+
+- `platform` config (`auto`, `supabase`, `firebase`); `auto` picks Firebase when
+  `firebase.json` or a root rules file exists and no Supabase project does. `firebaseJson`
+  names a different `firebase.json`.
+- Rules parser: nested `match`, wildcards, rule functions with `let`, `allow` classified as
+  public / signed-in / conditional / closed; test-mode `request.time < timestamp.date(...)`
+  is open until its date. Realtime Database JSON rules. UTF-16, BOM and commented
+  `firebase.json` accepted.
+- Code: Firestore references (chains, path strings, v9 modular, variables, getters, helper
+  functions, Dart extensions), Storage references, `httpsCallable` and auto-detected call
+  wrappers; `.dart` and `.html` are scanned in Firebase projects. `wrappers.firestore` names
+  your own path helpers.
+- Cloud Functions read from each codebase's entry module, through re-exports, grouped
+  functions (`export * as`, object groups, `exports.x = require()`) and namespace members.
+- Rules: `firebase-rules-public-write`, `firebase-rules-open-catch-all`,
+  `firestore-self-writable-access-field`, `firestore-rule-unused` (Fix);
+  `firebase-rules-signed-in-write`, `firebase-rules-public-read`,
+  `firestore-self-grantable-membership`, `firestore-path-without-rule`,
+  `uncalled-callable-function`, `missing-callable-function`, `callable-without-auth-check`
+  (Review); `duplicate-cloud-function` (Info).
+- `graph.html` speaks Firebase: rule paths, Cloud Functions and Storage paths; a reach matrix
+  of who passes the rules (any signed-in user, anyone) per service; the path view shows the
+  client SDK, the Security Rules and who passes them.
+- Benchmark: 70 public Firebase repositories in two rounds, 75 of 75 Fix findings correct after
+  the fixes they prompted; the second, fresh round was 38 of 45 before them
+  ([BENCHMARKS.md](BENCHMARKS.md#firebase)).
+
 ## 0.2.0
 
 Renamed from supareach before the first release.

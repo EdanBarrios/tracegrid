@@ -1,5 +1,7 @@
 # Rules
 
+Supabase rules are below. Firebase rules (Security Rules, Cloud Functions): [firebase.md](firebase.md).
+
 Every finding has a **tier**:
 
 - **Fix**: high confidence. Reachable by anon/authenticated (or PUBLIC) with no recognised

@@ -7,13 +7,13 @@
 [![npm](https://img.shields.io/npm/v/tracegrid)](https://www.npmjs.com/package/tracegrid)
 [![CI](https://github.com/EdanBarrios/tracegrid/actions/workflows/ci.yml/badge.svg)](https://github.com/EdanBarrios/tracegrid/actions)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![Supabase · Firebase next](https://img.shields.io/badge/Supabase-Firebase%20next-3ecf8e)
+![Supabase · Firebase](https://img.shields.io/badge/Supabase%20%C2%B7%20Firebase-3ecf8e)
 
 <img src="docs/tracegrid.gif" alt="tracegrid: dashboard, path view and 3D map of the bundled demo app" width="900">
 
 </div>
 
-Static, offline, no AI, no telemetry. On 20 public Supabase apps, 111 of 113 Fix findings held up when checked by hand ([benchmarks](BENCHMARKS.md)). v0.x, best effort: read [Limitations](#limitations) before acting on a finding.
+Supabase and Firebase (including Flutter apps). Static, offline, no AI, no telemetry. Checked by hand on public apps: 111 of 113 Fix findings held up on 20 Supabase apps, and 75 of 75 on 70 Firebase apps ([benchmarks](BENCHMARKS.md)). v0.x, best effort: read [Limitations](#limitations) before acting on a finding.
 
 ## What it finds
 
@@ -25,7 +25,17 @@ Static, offline, no AI, no telemetry. On 20 public Supabase apps, 111 of 113 Fix
 | Missing RPC or edge function | `.rpc('get_totals')` not in the schema | Review |
 | Edge function with no caller | `functions/old-sync` never invoked | Review |
 
-All rules, tiers and examples: [docs/rules.md](docs/rules.md).
+Firebase (Firestore, Storage, Realtime Database, Cloud Functions; Dart and JS/TS):
+
+| Finding | Example | Tier |
+|---|---|---|
+| Rule anyone can write through | `allow update, delete: if true` | Fix |
+| User can grant themselves access | rules trust `users/{uid}.role`, and the owner may write `role` | Fix |
+| Rule path open to clients, unused | `/billing/{id}` readable by signed-in users, no client code touches it | Fix |
+| Callable function with no auth check | `onCall` handler never reads `request.auth` | Review |
+| Callable function nothing calls | `onCall` export with no `httpsCallable` | Review |
+
+All rules, tiers and examples: [docs/rules.md](docs/rules.md) and [docs/firebase.md](docs/firebase.md).
 
 ## Quickstart
 
@@ -67,6 +77,7 @@ claude plugin install tracegrid@tracegrid
 - Replays your Supabase migrations (or reads the live catalog with `--db-url`) to learn tables, functions, grants and RLS.
 - Parses your code with the TypeScript parser to find `.from`, `.rpc`, `functions.invoke` and storage calls.
 - Joins the two into one graph and reports exposure with no caller, in the reverse direction most tools skip.
+- Firebase: parses Security Rules (rule functions inlined) and finds Firestore, Storage and callable-function references in Dart and JS/TS ([details](docs/firebase.md)).
 - Writes `report.md`, `graph.json` and an offline `graph.html`.
 
 ## Limitations
@@ -80,4 +91,4 @@ claude plugin install tracegrid@tracegrid
 
 [Docs](docs/README.md) · [Configuration](docs/configuration.md) · [Rules](docs/rules.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Benchmarks](BENCHMARKS.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
-Not affiliated with Supabase. MIT © Edan Barrios.
+Not affiliated with Supabase or Google. MIT © Edan Barrios.

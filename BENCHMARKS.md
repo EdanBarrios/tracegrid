@@ -1,7 +1,8 @@
 # Benchmarks
 
-tracegrid on 20 public Supabase repositories, October 2026: how many findings it reports,
-how many of them hold up when a person reads the code, and how long it takes.
+tracegrid on public repositories, October 2026: how many findings it reports, how many of them
+hold up when a person reads the code, and how long it takes. [Supabase](#summary): 20
+repositories. [Firebase](#firebase): 70 repositories in two rounds.
 
 ## Summary
 
@@ -100,3 +101,77 @@ Each false positive was traced to a cause and fixed with a regression test:
 `node bin/tracegrid.js <repo> --no-plugins` on each repository at the listed commit. The
 repository list, commits and per-finding verdicts are published here once the private
 disclosure is resolved.
+
+## Firebase
+
+### Summary
+
+- **Fix tier: 75 of 75 findings correct** across 70 public Firebase repositories (9,058 files),
+  at the commit that ships Firebase support.
+- **On a fresh sample, 38 of 45 before fixes (84%).** Round 1 drove the first fixes; round 2 was
+  a new random sample the code had never seen, scanned and checked before changing anything. The
+  7 misses had three causes (below), each fixed with a regression test.
+- **What the Fix findings are:** 26 rules anyone can write through (update, delete, Storage
+  uploads, Realtime Database paths), 8 catch-all rules opening the whole database, 18 cases where
+  a user can grant themselves access by writing a field the rules trust (`role`, `isAdmin`,
+  `organizationId`), and 23 rule paths open to clients that no client code uses.
+- **0 rules statements** the parser could not read, across 1,616-line rules files, UTF-16 files
+  and commented `firebase.json`.
+
+### Method
+
+- **Selection.** GitHub code search for `firestore.rules` files (queries on common rule patterns,
+  storage rules, Realtime Database rules, and `cloud_firestore` in `pubspec.yaml` for Flutter
+  apps); forks, repositories over 150 MB and, in round 2, repositories untouched since June
+  2024 were dropped. Round 1: 57 candidates, round 2: a seeded random 110 of 420 new ones.
+- **Kept:** repositories that are Firebase projects with rules and client call sites (no scope
+  problems): 27 in round 1, 43 in round 2. The rest had no rules file, no Firebase calls, or
+  were Supabase projects.
+- **Checking.** Every Fix finding was read against the rules and the code: the rule text for
+  rule findings, a search of all client code for the collection for "unused" findings, and the
+  write rules plus every rule reading the field for self-grant findings. Review was sampled:
+  callables without an auth check 8 of 8 correct, paths without a rule 12 of 12, unused paths at
+  Review 7 of 8 (the miss: a custom wrapper class, now configurable with `wrappers.firestore`).
+- Repositories stay pseudonymous; several have live exposure.
+
+### Results
+
+| | Round 1 | Round 2 (fresh) |
+|---|---:|---:|
+| Repositories / files | 27 / 2,424 | 43 / 6,634 |
+| Fix findings, correct before fixes | 37 of 37 * | 38 of 45 |
+| Fix findings, correct after | 37 of 37 † | 38 of 38 |
+| Review / Info findings | 212 / 4 | 297 / 1 |
+
+\* 5 of them (public create-only writes) were then moved to Review as a tier choice, not because
+they were wrong. † Includes 5 from the self-grant rule, added after round 1 and checked then.
+
+### What the benchmark changed
+
+- **Encodings and lenient config** (round 1): UTF-16 rules files, `firebase.json` with comments
+  or a BOM, and rules without `firebase.json` crashed or were skipped.
+- **Cloud Functions export styles** (both rounds): `const f = onCall()` exported later,
+  `export * as group`, `exports.group = require()`, object groups, `export const { a } = ns`
+  and `export const a = obj.a`. One repository went from 34 "missing" functions to 3, which are
+  real (the app calls functions that were renamed or removed).
+- **Collection-group rules are not catch-alls** (round 2): `/{path=**}/comments/{id}` covers
+  `comments` collections only.
+- **Who counts as already privileged** (round 2): a write only admins pass, or only a fixed
+  email, is not self-escalation; `(request.resource.data).role` after a helper is inlined is a
+  real check.
+- **Reference helpers** (round 2): Dart extensions on `FirebaseFirestore`
+  (`shareLinksRef() => collection('shareLinks')`) and helper functions returning a reference
+  are followed to their call sites.
+- **Create-only public writes are Review** (round 1): contact forms and guest orders write that
+  way on purpose.
+- Multi-line receivers, `.html` inline scripts, and handler bodies running past their end were
+  fixed in round 1.
+
+### Known gaps
+
+- Generic repository classes that take the collection name as a parameter stay unresolved;
+  the unused-path findings they could reach drop to Review.
+- Callers outside the repository (admin web apps, other mobile apps, older app versions) are
+  invisible.
+- Rules edited in the console and never committed are not seen.
+
