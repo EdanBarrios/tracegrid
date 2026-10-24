@@ -8,8 +8,9 @@ how many of them hold up when a person reads the code, and how long it takes.
 - **Fix tier: 111 of 113 findings correct (98%).** Before the fixes this benchmark prompted
   (in 0.2.0), 109 of 137 were correct (80%).
 - **Most correct findings are low impact.** They are real exposure nobody uses (a function anon
-  can execute that no code calls), but rarely dangerous on their own. One finding is likely
-  serious; it is held back for private disclosure to the project.
+  can execute that no code calls), but rarely dangerous on their own. One finding lets an
+  unauthenticated caller write rows (event and challenge-flag records) through a SECURITY
+  DEFINER function; it is held back for private disclosure to the project.
 - **Review tier is noisier and not fully verified.** 302 Review findings before the fixes, 219
   after. It is meant to be read, not gated on.
 - **Runtime:** median 3.3 s per repository; 59 s for the largest (1,234 migrations, 13,454
