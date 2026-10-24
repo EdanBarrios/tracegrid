@@ -11,6 +11,7 @@ import { resolveFirebase, readText } from './project.js';
 import { parseRulesFile, parseDatabaseRules, pathMatches, isRecursive, rankOf, OPS, authzRefs } from './rules.js';
 import { scanFirebase } from './scan.js';
 import { listCloudFunctions, missingAuthCheck } from './functions.js';
+import { duplicateGroups } from '../dupes.js';
 import { makeSuppressor, codeRoots, SCHEMA_VERSION } from '../analyze.js';
 
 /** Code scanned by default in a Firebase project: Dart plus the usual JS/TS. */
@@ -22,7 +23,7 @@ export const FIREBASE_IGNORE = {
   'firebase-rules-public-write': 'tables', 'firebase-rules-open-catch-all': 'tables', 'firebase-rules-signed-in-write': 'tables', 'firebase-rules-public-read': 'tables',
   'firestore-rule-unused': 'tables', 'firestore-path-without-rule': 'tables',
   'firestore-self-writable-access-field': 'tables', 'firestore-self-grantable-membership': 'tables',
-  'uncalled-callable-function': 'edgeFunctions', 'missing-callable-function': 'edgeFunctions', 'callable-without-auth-check': 'edgeFunctions',
+  'uncalled-callable-function': 'edgeFunctions', 'duplicate-cloud-function': 'edgeFunctions', 'missing-callable-function': 'edgeFunctions', 'callable-without-auth-check': 'edgeFunctions',
 };
 
 export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = new Date() }) {
@@ -111,6 +112,10 @@ export function analyzeFirebase(root, { cfg, plugins = [], warnings = [], now = 
     const noAuth = f.kind === 'callable' ? missingAuthCheck(f.body) : null;
     node(`edge:${f.name}`, 'edge_function', f.name, { kind: f.kind, at: f.at, codebase: f.codebase, ...(f.trigger ? { trigger: f.trigger } : {}), ...(noAuth ? { noAuthCheck: noAuth } : {}) });
   }
+
+  // Near-duplicate functions: each copy is another endpoint to secure and keep in step.
+  const dupes = duplicateGroups(fns.map((f) => ({ name: f.name, body: f.body })));
+  for (const g of dupes) for (const name of g.names) Object.assign(nodes.get(`edge:${name}`), { duplicates: g.names.filter((x) => x !== name), similarity: g.similarity });
 
   const firestoreNodes = ruleNodes.filter((n) => n.service === 'firestore');
   const openOps = (n) => OPS.some((o) => n.access[o].cls !== 'closed');

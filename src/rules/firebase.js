@@ -209,6 +209,19 @@ export const firebaseRules = [
     },
   },
   {
+    id: 'duplicate-cloud-function',
+    level: 'note',
+    tier: 'info',
+    title: 'Cloud Functions that are near-copies of each other',
+    why: 'The handlers are the same code with different names and literals (85% or more of their token sequences match once local names and literals are normalized). Typical of functions added by separate sessions or agents that did not know the first one existed. Each copy is another endpoint to secure and to keep in step: a fix to one is easy to miss in the others. Merge them into one parameterised function or a shared helper.',
+    run({ graph }) {
+      const seen = new Set();
+      return graph.nodes.filter((n) => n.type === 'edge_function' && n.duplicates).map((n) => [n.label, ...n.duplicates].sort())
+        .filter((names) => { const k = names.join('|'); if (seen.has(k)) return false; seen.add(k); return true; })
+        .map((names) => { const n = graph.node(`edge:${names[0]}`); return { id: names.join(' ~ '), node: n.id, at: n.at, message: `${names.length} near-identical functions (similarity ${n.similarity}): ${names.join(', ')}` }; });
+    },
+  },
+  {
     id: 'callable-without-auth-check',
     level: 'warning',
     tier: 'review',

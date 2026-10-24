@@ -392,3 +392,19 @@ test('passableWithout: a privilege check alone blocks; OR-ed with ownership it d
   assert.equal(passableWithout('!isAdminCheck', admin), true);
   assert.equal(passableWithout('owner && false', admin), false);
 });
+
+test('duplicateGroups: renamed copies group together, different handlers do not', async () => {
+  const { duplicateGroups } = await import('../src/dupes.js');
+  const body = (role, v) => `onCall(async (request) => {
+    if (!request.auth || request.auth.token.admin !== true) throw new HttpsError('permission-denied', 'no');
+    const ${v} = request.data.email;
+    const user = await admin.auth().getUserByEmail(${v});
+    const claims = user.customClaims || {};
+    await admin.auth().setCustomUserClaims(user.uid, { ...claims, ${role}: true });
+    await admin.firestore().collection('audit').add({ by: request.auth.uid, target: user.uid, role: '${role}' });
+    return { ok: true, message: 'done' };
+  })`;
+  const g = duplicateGroups([{ name: 'addAdmin', body: body('admin', 'email') }, { name: 'addCaptain', body: body('captain', 'mail') },
+    { name: 'other', body: "onCall(async (r) => { const s = await db.collection('x').where('a', '==', r.data.a).get(); return s.docs.map((d) => d.data()).filter(Boolean).slice(0, 10).concat([1, 2, 3]).reverse().join(','); })" }]);
+  assert.deepEqual(g.map((x) => x.names), [['addAdmin', 'addCaptain']]);
+});

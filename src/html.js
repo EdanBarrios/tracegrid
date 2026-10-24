@@ -663,7 +663,10 @@ var TITLES={
 'firestore-path-without-rule':function(){return 'Code uses a path that no rule allows (requests are denied)'},
 'uncalled-callable-function':function(){return 'Cloud Function nothing in the app calls'},
 'missing-callable-function':function(){return 'Code calls a Cloud Function that is not exported'},
-'callable-without-auth-check':function(){return 'Cloud Function that never checks who is calling'}};
+'callable-without-auth-check':function(){return 'Cloud Function that never checks who is calling'},
+'firestore-self-writable-access-field':function(){return 'Users can give themselves access by writing a field the rules trust'},
+'firestore-self-grantable-membership':function(){return 'Users can create their own membership (admin, team) document'},
+'duplicate-cloud-function':function(){return 'Cloud Functions that are copies of each other'}};
 function plainTitle(f){var fn=Object.prototype.hasOwnProperty.call(TITLES,f.rule)?TITLES[f.rule]:null;if(fn)return fn(f,f.node&&byId.get(f.node));var r=rules.get(f.rule);return (r&&r.title)||f.rule}
 var inFilter=function(f){return !state.filter||(f.node&&state.filter.ids.has(f.node))};
 function tip(text,right){return h('span',{cls:'q'+(right?' r':''),tabindex:'0',role:'img','aria-label':text,'data-tip':text,text:'?'})}
