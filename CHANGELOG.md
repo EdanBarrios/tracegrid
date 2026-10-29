@@ -3,7 +3,7 @@
 All notable changes. Versions follow semver; while 0.x, minor versions may break the config,
 the rule contract or `graph.json` (whose `schema_version` is bumped when its shape breaks).
 
-## 0.3.0 (unreleased)
+## 0.3.0
 
 Firebase support: Firestore, Storage and Realtime Database Security Rules, Cloud Functions,
 and app code in Dart (Flutter) and JavaScript / TypeScript. Same graph, tiers, report, viewer,

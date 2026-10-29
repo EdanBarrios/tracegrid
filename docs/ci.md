@@ -1,8 +1,8 @@
 # CI
 
 ```sh
-npx --yes tracegrid@0.2.1 --update-baseline      # writes tracegrid.baseline.json; commit it
-npx --yes tracegrid@0.2.1 --check --no-output    # exit 1 on a new Fix finding not in the baseline
+npx --yes tracegrid@0.3.0 --update-baseline      # writes tracegrid.baseline.json; commit it
+npx --yes tracegrid@0.3.0 --check --no-output    # exit 1 on a new Fix finding not in the baseline
 ```
 
 The baseline is a list of fingerprints (Fix and Review findings). By default `--check` fails on
@@ -28,7 +28,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npx --yes tracegrid@0.2.1 --check --github --no-plugins
+      - run: npx --yes tracegrid@0.3.0 --check --github --no-plugins
   # Optional code-scanning alerts, in their own job so only it gets security-events: write
   # (needs GitHub Code Security on private repositories).
   sarif:
@@ -41,7 +41,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npx --yes tracegrid@0.2.1 --no-output --no-plugins --sarif tracegrid.sarif
+      - run: npx --yes tracegrid@0.3.0 --no-output --no-plugins --sarif tracegrid.sarif
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with: { sarif_file: tracegrid.sarif }
 ```

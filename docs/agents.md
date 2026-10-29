@@ -20,7 +20,7 @@ reachability before changing the Supabase or Firebase surface.
 
 Before changing, revoking, dropping or renaming a Supabase table, RPC, policy, grant or edge
 function, or a Firebase Security Rule, Firestore/Storage path or Cloud Function, run
-`npx --yes tracegrid@0.2.1 --json --out .tracegrid` from the repo root and check callers.
+`npx --yes tracegrid@0.3.0 --json --out .tracegrid` from the repo root and check callers.
 stdout is one JSON object (`tiers`, `findings` with `file:line`, `scope_problems`); the human
 text goes to stderr.
 

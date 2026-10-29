@@ -54,7 +54,7 @@ test('--check without a baseline explains what to do and treats every finding as
 
 test('versions agree; package ships the demo, skill and plugin; SARIF points at the repository', () => {
   const pkg = json('package.json');
-  assert.equal(pkg.version, '0.2.1');
+  assert.equal(pkg.version, '0.3.0');
   assert.equal(json('.claude-plugin/plugin.json').version, pkg.version);
   assert.match(fs.readFileSync(path.join(repo, 'action.yml'), 'utf8'), new RegExp(`default: ${pkg.version.replace(/\./g, '\\.')}`));
   assert.equal(pkg.engines.node, '>=20');

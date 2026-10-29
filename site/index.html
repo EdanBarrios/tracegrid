@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tracegrid</title>
-<meta name="description" content="Map every path from your app's code to its Supabase database, and catch what's exposed but never used. Static, offline, no AI, no telemetry.">
+<meta name="description" content="Map every path from your app's code to its Supabase or Firebase backend, and catch what's exposed but never used. Static, offline, no AI, no telemetry.">
 <meta property="og:title" content="tracegrid">
-<meta property="og:description" content="Map every path from your app's code to its Supabase database, and catch what's exposed but never used.">
+<meta property="og:description" content="Map every path from your app's code to its Supabase or Firebase backend, and catch what's exposed but never used.">
 <meta property="og:image" content="https://tracegrid.dev/dashboard.png">
 <meta property="og:url" content="https://tracegrid.dev/">
 <meta name="twitter:card" content="summary_large_image">
@@ -148,7 +148,7 @@ footer a { color: var(--muted); }
 
   <section>
     <h2>Gate pull requests</h2>
-<pre>- run: npx --yes tracegrid@0.2.1 --check --github --no-plugins</pre>
+<pre>- run: npx --yes tracegrid@0.3.0 --check --github --no-plugins</pre>
     <p class="note"><code>--check</code> fails only on new Fix findings not in your baseline. Built for fork-PR CI: plugins off, read-only, escaped output. <a href="https://github.com/EdanBarrios/tracegrid/blob/main/docs/ci.md">CI guide</a> · <a href="https://github.com/EdanBarrios/tracegrid/blob/main/SECURITY.md">Security model</a></p>
   </section>
 

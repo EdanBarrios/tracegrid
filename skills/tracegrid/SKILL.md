@@ -1,7 +1,7 @@
 ---
 name: tracegrid
 description: Map how an app's code reaches its backend and find surface a signed-in or anonymous user can reach that no code calls. Supabase (tables, RPCs, edge functions, storage, cron, auth hooks, grants, RLS) and Firebase (Firestore, Storage and Realtime Database Security Rules, Cloud Functions, Dart and JS/TS clients). Use when the user asks who calls a table, RPC, collection path or function; what breaks if a grant, function, table, rule or policy is revoked, dropped or renamed; whether an RPC, edge function or callable function is dead; for a Supabase or Firebase security review; or before changing grants, policies, Security Rules or functions. Needs supabase/migrations (or a Postgres URL) or firebase.json / a rules file.
-allowed-tools: Bash(npx --yes tracegrid@0.2.1:*), Bash(npx tracegrid:*), Read, Grep, Glob
+allowed-tools: Bash(npx --yes tracegrid@0.3.0:*), Bash(npx tracegrid:*), Read, Grep, Glob
 ---
 
 # tracegrid
@@ -16,7 +16,7 @@ and JS/TS. Either way it writes a graph plus findings. It never needs an API key
 From the project root:
 
 ```sh
-npx --yes tracegrid@0.2.1 --out .tracegrid
+npx --yes tracegrid@0.3.0 --out .tracegrid
 ```
 
 - It scans the whole project (`.vue`, `.svelte` and `.astro` script blocks included) and

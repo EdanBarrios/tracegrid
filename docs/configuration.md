@@ -28,7 +28,7 @@ Firebase projects: see [firebase.md](firebase.md#configuration) for `platform`, 
   in trusted workflows (see [SECURITY.md](../SECURITY.md)).
 
 ```sh
-TRACEGRID_DB_URL="postgresql://readonly_user:...@host:5432/postgres" npx --yes tracegrid@0.2.1
+TRACEGRID_DB_URL="postgresql://readonly_user:...@host:5432/postgres" npx --yes tracegrid@0.3.0
 ```
 
 It never asks for a Supabase API key: it talks Postgres, not the Data API.
