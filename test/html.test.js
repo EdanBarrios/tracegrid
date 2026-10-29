@@ -113,9 +113,9 @@ test('3D tab has an overview button, an Esc handler and a breadcrumb', () => {
   assert.match(h, /addEventListener\('dblclick'/);
 });
 
-test('colourways: signal is the default, all four are defined with a light variant, and the 3D palette follows them', () => {
+test('colourways: signal is the default, all are defined with a light variant, and the 3D palette follows them', () => {
   assert.equal(DEFAULT_COLORWAY, 'signal');
-  assert.deepEqual(COLORWAYS, ['graphite-amber', 'signal', 'mono', 'mint']);
+  assert.deepEqual(COLORWAYS, ['graphite-amber', 'signal', 'mono', 'mint', 'ember']);
   const h = renderHtml(hostile());
   assert.match(h, /<html lang="en" data-colorway="signal" data-theme="dark">/);
   const d = JSON.parse(scripts(h).json);
@@ -140,6 +140,14 @@ test('colourways: signal is the default, all four are defined with a light varia
   // The 3D view reads the palette from the active colourway and re-applies it when it changes.
   assert.match(code, /function recolor3d\(\)\{[^]*pal\(\);G3\.backgroundColor\(P3\.bg\)/);
   assert.match(code, /function applyLook\(\)\{[^]*recolor3d\(\)/);
+});
+
+test('colourways: a Firebase project opens in ember unless a colourway is chosen; Supabase stays signal', () => {
+  const fb = { ...hostile(), platform: 'firebase' };
+  assert.match(renderHtml(fb), /<html lang="en" data-colorway="ember" data-theme="dark">/);
+  assert.equal(JSON.parse(scripts(renderHtml(fb)).json).colorway, 'ember');
+  assert.match(renderHtml(fb, { colorway: 'mono' }), /data-colorway="mono"/);
+  assert.match(renderHtml({ ...hostile(), platform: 'supabase' }), /data-colorway="signal"/);
 });
 
 test('colourways: ?colorway= beats storage beats the baked-in default, and every storage access is wrapped', () => {

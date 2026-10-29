@@ -11,7 +11,7 @@
 // The look lives in one place: the THEME block of CSS variables at the top of CSS below (colours,
 // strokes, radii, sizes, fonts, and the 3D palette, which the script reads from the same variables).
 
-import { COLORWAYS, DEFAULT_COLORWAY, checkColorway } from './colorways.js';
+import { COLORWAYS, defaultColorway, checkColorway } from './colorways.js';
 
 /** The pinned 3D library (bundles three.js). Checked with `curl -sI`; the hash is of the fetched file. */
 export const FG3D = {
@@ -43,7 +43,7 @@ export function truncLeft(str, max) {
 }
 
 export function renderHtml(r, opts = {}) {
-  const colorway = opts.colorway == null ? DEFAULT_COLORWAY : checkColorway(opts.colorway, 'renderHtml');
+  const colorway = opts.colorway == null ? defaultColorway(r.platform) : checkColorway(opts.colorway, 'renderHtml');
   const info = r.info || {};
   const unreadable = info.unreadable_files || [];
   const s = r.stats || {};
@@ -111,7 +111,7 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
 const CSS = String.raw`
 /* ===== THEME: every colour, stroke, radius, size and font, for the 2D views and the 3D view. Swap this block to restyle. =====
    Structure (fonts, sizes, strokes) is in :root. Colour comes from the active colourway, set as data-colorway on <html>
-   (default signal), in a dark and a light variant (data-theme). Severity never rests on colour alone: the
+   (default signal; ember for Firebase projects), in a dark and a light variant (data-theme). Severity never rests on colour alone: the
    glyphs ◆ Fix, ◇ Review and · Info always accompany it. The script reads the 3D palette from the same variables. */
 :root{
 --font:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
@@ -171,6 +171,19 @@ const CSS = String.raw`
 --node:#2a2925;--node-fill:#fbfaf7;--edge:#6d6a62;--edge-hi:#14130f;--edge-label:#55524a;
 --fix:#006a47;--review:#3a5877;--info:#5e5b53;--sel:#14130f;--bar:#8d897e;--accent:#3a5877;
 --3d-bg:#ebe9e2;--3d-node:#2a2925;--3d-link:#6d6a62;--3d-link-hi:#14130f;--3d-label:#2a2925;--3d-star:#8d897e;--3d-glow:.2;
+}
+/* ember: the Firebase default. Same black and grid, Fix orange, Review yellow */
+:root[data-colorway=ember]{
+--bg:#080706;--grid:rgba(255,190,90,.045);--panel:#0e0c0a;--panel2:#171310;--fg:#ece6dc;--muted:#a09684;--line:#2a241d;--line2:#433a2e;
+--node:#dcd3c4;--node-fill:#0c0a08;--edge:#8a7f6c;--edge-hi:#fff3dc;--edge-label:#b3a791;
+--fix:#ff7a1a;--review:#ffc933;--info:#9a9080;--sel:#fff3dc;--bar:#675d4c;--accent:#ffb020;--fix-w:400;
+--3d-bg:#040302;--3d-node:#e2d9ca;--3d-link:#9c907a;--3d-link-hi:#fff3dc;--3d-label:#ddd4c4;--3d-star:#9c907a;--3d-glow:.55;
+}
+:root[data-colorway=ember][data-theme=light]{
+--bg:#f7f4ee;--grid:rgba(120,70,0,.06);--panel:#fcfaf5;--panel2:#f0ebe1;--fg:#1a1611;--muted:#645a48;--line:#ded7c8;--line2:#bfb5a0;
+--node:#2a251d;--node-fill:#fcfaf5;--edge:#74684f;--edge-hi:#17120a;--edge-label:#554b39;
+--fix:#b84a00;--review:#8a6500;--info:#645a48;--sel:#17120a;--bar:#94896f;--accent:#9a5a00;
+--3d-bg:#ece7db;--3d-node:#2a251d;--3d-link:#74684f;--3d-link-hi:#17120a;--3d-label:#2a251d;--3d-star:#94896f;--3d-glow:.2;
 }
 /* ===== end THEME ===== */
 *{box-sizing:border-box;border-radius:var(--radius)}

@@ -29,7 +29,7 @@ export const DEFAULTS = {
   firebaseJson: null,
   // The Supabase project directory (the one holding config.toml, migrations/ and functions/).
   // Auto-detected: the only **/supabase/config.toml (or **/supabase/migrations) in the project.
-  // Colourway baked into graph.html as its default: graphite-amber, signal, mono or mint (--colorway overrides).
+  // Colourway baked into graph.html as its default: graphite-amber, signal, mono, mint or ember (--colorway overrides; unset: signal, or ember for Firebase).
   colorway: null,
   supabaseDir: null,
   // Override migrations / functions directories (default: <supabaseDir>/migrations, <supabaseDir>/functions).

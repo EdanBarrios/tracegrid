@@ -20,8 +20,9 @@ selects a finding and opens its path, `view=dash`, `view=path`, `view=map` or `v
 
 ## Colourways
 
-`graph.html` ships four colourways, each with a dark and a light variant: `signal` (the
-default: red and amber), `graphite-amber` (soft gold and slate), `mono` and `mint`. Severity is never colour alone:
+`graph.html` ships five colourways, each with a dark and a light variant: `signal` (the
+default: red and amber), `ember` (the default for Firebase projects: the same black and grid in
+orange and yellow), `graphite-amber` (soft gold and slate), `mono` and `mint`. Severity is never colour alone:
 the glyphs ◆ Fix, ◇ Review and · Info always go with it. Pick one in the page (gear button in the
 sidebar: colourway, light / dark / auto, auto-rotate for the 3D tab; saved in the browser's
 localStorage), with `?colorway=mono` on the URL (beats the saved choice), or set the default baked
