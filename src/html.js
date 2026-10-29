@@ -48,11 +48,11 @@ export function renderHtml(r, opts = {}) {
   const unreadable = info.unreadable_files || [];
   const s = r.stats || {};
   const data = {
-    root: r.root, generated_at: r.generated_at, source: r.source || null,
+    root: r.root, generated_at: r.generated_at, source: r.source || null, platform: r.platform || 'supabase',
     tiers: r.tiers || null, notices: r.notices || [], stats: r.stats || null,
     coverage: {
       files: s.files_scanned, call_sites: s.call_sites, unresolved: s.unresolved, migrations: s.migrations, sql_statements: s.sql_statements,
-      sql_unparsed: s.sql_unparsed, partial: unreadable.filter((f) => f.partial).length, unreadable: unreadable.filter((f) => !f.partial).length,
+      sql_unparsed: s.sql_unparsed ?? s.rules_unparsed, partial: unreadable.filter((f) => f.partial).length, unreadable: unreadable.filter((f) => !f.partial).length,
     },
     baseline: opts.baseline ? { file: opts.baseline.file, fresh: opts.baseline.fresh.length, fixed: opts.baseline.fixed.length } : null,
     nodes: r.nodes,
@@ -321,12 +321,21 @@ var TIER_OF={error:'fix',warning:'review',note:'info'};
 D.findings.forEach(function(f){if(!f.tier)f.tier=TIER_OF[f.level]||'review'});
 var byNode=new Map();D.findings.forEach(function(f){if(!f.node)return;if(!byNode.has(f.node))byNode.set(f.node,[]);byNode.get(f.node).push(f)});
 var RANK={fix:0,review:1,info:2};
+/* Firebase scans: rule paths carry access = { get|list|create|update|delete: { cls } }, cls one of
+   closed < conditional < signed-in < public. */
+var FB=D.platform==='firebase';
+var ACC={closed:0,conditional:1,'signed-in':2,'public':3};
+var fbOps=function(n,lvl){if(!n||!n.access)return[];return Object.keys(n.access).filter(function(o){return ACC[n.access[o].cls]>=ACC[lvl]})};
+var fbRoles=function(n){var r=[];if(fbOps(n,'public').length)r.push('anyone');if(fbOps(n,'signed-in').length)r.push('signed-in');if(!r.length&&fbOps(n,'conditional').length)r.push('owner / condition');return r};
+var fbRoleOps=function(n,r){return r==='anyone'?fbOps(n,'public'):r==='signed-in'?fbOps(n,'signed-in'):fbOps(n,'conditional')};
+var SVC={firestore:'Firestore',storage:'Storage',rtdb:'Realtime DB'};
 /* Severity is never colour alone: a glyph always goes with it. */
 var GLY={fix:'\u25c6',review:'\u25c7',info:'\u00b7'};
 var worst=function(id){var fs=byNode.get(id);if(!fs)return null;return fs.slice().sort(function(a,b){return RANK[a.tier]-RANK[b.tier]})[0].tier};
 var COLNAME=['Code','Entry points','Database','Roles'];
 var COL={file:0,folder:0,nocaller:0,edge_function:1,bucket:1,external:1,api:1,table:2,view:2,'function':2,cron:2,policy:2,group:2,role:3,more:-1};
 var KINDNAME={api:'Data API',file:'file',folder:'folder',edge_function:'edge function',bucket:'storage bucket',external:'external caller',table:'table',view:'view','function':'function',cron:'cron / SQL',policy:'policies',role:'role',nocaller:'',group:'group'};
+if(FB){COLNAME=['Code','Entry points','Security Rules','Who'];COL.bucket=2;KINDNAME.table='rule path';KINDNAME.bucket='Storage path';KINDNAME.edge_function='Cloud Function';KINDNAME.api='client SDK';KINDNAME.policy='rules'}
 var folderOf=function(l){var p=String(l).split('/');return p.length>2?p.slice(0,2).join('/'):p.length>1?p[0]:'(root)'};
 var short=function(x,n){x=String(x);return x.length>n?x.slice(0,n-1)+'\u2026':x};
 var shortPath=function(x,n){x=String(x);return x.length>n?'\u2026'+x.slice(-(n-1)):x};
@@ -366,14 +375,14 @@ function sym(t,r,cls){var g=s('g',{'class':'sym'+(cls?' '+cls:'')});var R=r*1.35
 
 /* ---------- state ---------- */
 var state={view:'dash',sel:null,node:null,q:'',tiers:{fix:true,review:true,info:true},kinds:{functions:true,tables:true,edge:true,other:true},expanded:new Set(),mapSel:null,filter:null};
-var kindOfFinding=function(f){var n=f.node&&byId.get(f.node);var t=n?n.type:'';return t==='function'?'functions':t==='table'||t==='view'?'tables':t==='edge_function'?'edge':'other'};
+var kindOfFinding=function(f){var n=f.node&&byId.get(f.node);var t=n?n.type:'';return t==='function'?'functions':t==='table'||t==='view'||(FB&&t==='bucket')?'tables':t==='edge_function'?'edge':'other'};
 
 /* ---------- sidebar ---------- */
 var chips=$('chips');
 function chip(label,on,cls,onClick){var b=h('button',{cls:'chip'+(on?' on':''),type:'button'});if(cls)b.appendChild(h('span',{cls:'dot',style:'color:var('+cls[0]+')',text:cls[1]}));b.appendChild(document.createTextNode(label));b.addEventListener('click',onClick);return b}
 function renderChips(){chips.textContent='';
   [['fix','Fix',['--fix',GLY.fix]],['review','Review',['--review',GLY.review]],['info','Info',['--info',GLY.info]]].forEach(function(t){chips.appendChild(chip(t[1],state.tiers[t[0]],t[2],function(){state.tiers[t[0]]=!state.tiers[t[0]];renderChips();renderList()}))});
-  [['functions','Functions'],['tables','Tables'],['edge','Edge'],['other','Other']].forEach(function(k){chips.appendChild(chip(k[1],state.kinds[k[0]],null,function(){state.kinds[k[0]]=!state.kinds[k[0]];renderChips();renderList()}))})}
+  (FB?[['tables','Rule paths'],['edge','Cloud Functions'],['other','Other']]:[['functions','Functions'],['tables','Tables'],['edge','Edge'],['other','Other']]).forEach(function(k){chips.appendChild(chip(k[1],state.kinds[k[0]],null,function(){state.kinds[k[0]]=!state.kinds[k[0]];renderChips();renderList()}))})}
 function renderFilter(){var el=$('filter');el.textContent='';if(!state.filter){el.hidden=true;return}el.hidden=false;
   el.appendChild(h('span',{text:'FILTER \u00b7 '+state.filter.label}));var x=h('button',{type:'button',title:'Clear filter'},'\u00d7');x.addEventListener('click',function(){setFilter(null)});el.appendChild(x)}
 function setFilter(f){state.filter=f;renderFilter();renderList();if(state.view==='dash'){drawDash();fitAll()}}
@@ -408,7 +417,7 @@ function renderList(){list.textContent='';var q=state.q;var flt=state.filter;
     list.appendChild(h('div',{cls:'grp lbl'},h('span',{text:flt?'Objects in this cell':'Objects'}),h('span',{text:String(objs.length)})));
     if(!objs.length)list.appendChild(h('div',{cls:'empty',text:'No object matches.'}));
     shown.forEach(function(n){var cc=callers(n.id).length;var b=h('button',{cls:'item'+(state.node===n.id&&!state.sel?' on':''),type:'button'},h('div',{cls:'r',text:(KINDNAME[n.type]||n.type)+(cc?'':' \u00b7 no caller in code')}),h('div',{cls:'n',text:n.label}));b.addEventListener('click',function(){selectNode(n.id)});list.appendChild(b)})}
-  if(!D.nodes.length){list.textContent='';list.appendChild(h('div',{cls:'empty',text:'The graph is empty: no code call sites and no schema objects were found. Check the warnings printed by the CLI (0 files scanned, 0 migrations) and set include / supabaseDir in tracegrid.config.json.'}))}
+  if(!D.nodes.length){list.textContent='';list.appendChild(h('div',{cls:'empty',text:FB?'The graph is empty: no code call sites and no rules were found. Check the warnings printed by the CLI and set include / firebaseJson in tracegrid.config.json.':'The graph is empty: no code call sites and no schema objects were found. Check the warnings printed by the CLI (0 files scanned, 0 migrations) and set include / supabaseDir in tracegrid.config.json.'}))}
 }
 $('q').addEventListener('input',function(ev){state.q=ev.target.value.trim().toLowerCase();renderList()});
 $('q').addEventListener('keydown',function(ev){if(ev.key==='Enter'){var f=D.findings.find(function(x){return state.tiers[x.tier]&&matchQ(x,state.q)});if(f)selectFinding(f)}if(ev.key==='Escape'){ev.target.value='';state.q='';renderList()}});
@@ -427,13 +436,15 @@ function renderCard(){card.textContent='';var f=state.sel,n=state.node&&byId.get
     if(r.title)card.appendChild(h('p',{cls:'why'},h('strong',{text:r.title+'. '}),document.createTextNode(String(r.why||'').replace(/\x60/g,''))))}
   else{card.appendChild(h('div',null,h('span',{cls:'lbl',text:KINDNAME[n.type]||n.type})));card.appendChild(h('h3',{text:n.label}));var dl2=h('dl');row(dl2,'Where',n.at);
     ['rls','policies','securityDefiner','anon','authenticated','returns','verifyJwt','entryPoint','schedule','securityInvoker','defaultGrants'].forEach(function(a){if(n[a]!==undefined&&n[a]!==null)row(dl2,a,String(n[a]))});
+    if(n.access)row(dl2,'Access',Object.keys(n.access).map(function(o){return o+': '+n.access[o].cls}).join(', '));
+    if(FB){row(dl2,'Service',SVC[n.service]);row(dl2,'Kind',n.kind);row(dl2,'Trigger path',n.trigger);row(dl2,'Auth check',n.noAuthCheck)}
     row(dl2,'Callers',String((inc.get(n.id)||[]).length));row(dl2,'Uses',String((out.get(n.id)||[]).length));card.appendChild(dl2);
     var fs=byNode.get(n.id)||[];fs.forEach(function(ff){var b=h('button',{type:'button',cls:'ghost'},h('span',{cls:'badge '+ff.tier,text:GLY[ff.tier]+' '+ff.tier}),document.createTextNode(ff.rule));b.style.marginTop='6px';b.addEventListener('click',function(){selectFinding(ff)});card.appendChild(h('div',null,b))})}
 }
 
 /* ---------- path view: a finding's neighbourhood in columns ---------- */
 var MAXN=25;
-function exposedOf(n){return n.type==='function'?(n.anon||n.authenticated):(n.type==='table'||n.type==='view')&&(!Array.isArray(n.clientPrivs)||n.clientPrivs.length>0)}
+function exposedOf(n){if(FB)return !!n.access&&fbOps(n,'conditional').length>0;return n.type==='function'?(n.anon||n.authenticated):(n.type==='table'||n.type==='view')&&(!Array.isArray(n.clientPrivs)||n.clientPrivs.length>0)}
 function neighbourhood(id,f){
   var V=new Map(),E=[],over=[0,0,0,0];
   var add=function(v){if(V.has(v.id))return true;if(V.size>=MAXN){var c=COL[v.type];if(c>=0)over[c]++;return false}V.set(v.id,v);return true};
@@ -446,21 +457,24 @@ function neighbourhood(id,f){
   var foldered=files.length>8;
   var ncallers=0;
   /* The Data API doorway: /rpc/<fn> for functions anon/authenticated can execute, /<table> for client-read tables. */
-  var apiId=null;var viaApi=function(rel){return /^(rpc|from)/.test(rel)};
+  var apiId=null;var viaApi=function(rel){return FB?rel==='from':/^(rpc|from)/.test(rel)};
   if(exposedOf(n)&&!n.missing){var ops=[];ins.forEach(function(e){if(viaApi(e.relation))(e.ops||[]).forEach(function(o){ops.push(o)})});
-    apiId='api:'+id;add({id:apiId,type:'api',label:(n.type==='function'?'/rpc/':'/')+bare(n.label),sub:'Data API (PostgREST)'});E.push({s:apiId,t:id,rel:n.type==='function'?'rpc':'from',ops:ops,conf:'extracted'})}
+    apiId='api:'+id;add(FB?{id:apiId,type:'api',label:SVC[n.service]||'client SDK',sub:'client SDK, checked by Security Rules'}:{id:apiId,type:'api',label:(n.type==='function'?'/rpc/':'/')+bare(n.label),sub:'Data API (PostgREST)'});E.push({s:apiId,t:id,rel:n.type==='function'?'rpc':'from',ops:ops,conf:'extracted'})}
   var link=function(src,e){var to=apiId&&viaApi(e.relation)?apiId:id;E.push({s:src,t:to,rel:e.relation,ops:e.ops,conf:e.confidence,at:e.at})};
   ins.forEach(function(e){var sN=byId.get(e.source);if(!sN)return;ncallers++;
     if(foldered&&sN.type==='file'){var fid='folder:'+folderOf(sN.label);if(add({id:fid,type:'folder',label:folderOf(sN.label)+'/'}))link(fid,e);return}
     if(add({id:sN.id,type:sN.type,label:sN.label,n:sN}))link(sN.id,e)});
   outs.slice(0,10).forEach(function(e){var tN=byId.get(e.target);if(!tN)return;if(add({id:tN.id,type:tN.type,label:tN.label,n:tN}))E.push({s:id,t:tN.id,rel:e.relation,ops:e.ops,conf:e.confidence,at:e.at})});
   var roles=[];
-  if(n.type==='function'){if(n.anon)roles.push('anon');if(n.authenticated)roles.push('authenticated')}
-  if((n.type==='table'||n.type==='view')&&Array.isArray(n.clientPrivs)&&n.clientPrivs.length){if(n.privsByRole){['anon','authenticated'].forEach(function(r){if((n.privsByRole[r]||[]).length)roles.push(r)})}else roles.push('anon / authenticated')}
+  if(FB&&n.access){fbRoles(n).forEach(function(r){var rid='role:'+r;var ops=fbRoleOps(n,r);if(add({id:rid,type:'role',label:r,sub:ops.join(', ')}))E.push({s:rid,t:id,rel:'privileges: '+ops.join(', '),conf:'extracted'})});
+    var rid2='policy:'+id;if(add({id:rid2,type:'policy',label:'Security Rules',sub:n.at||''}))E.push({s:id,t:rid2,rel:'rules',conf:'extracted'})}
+  if(FB&&n.type==='edge_function'&&(n.kind==='callable'||n.kind==='http')){var cr='role:'+(n.noAuthCheck?'anyone':'signed-in');if(add({id:cr,type:'role',label:n.noAuthCheck?'anyone':'signed-in',sub:n.kind==='http'?'HTTP':'onCall'}))E.push({s:cr,t:id,rel:'invoke',conf:n.noAuthCheck?'inferred':'ambiguous'})}
+  if(FB){}else if(n.type==='function'){if(n.anon)roles.push('anon');if(n.authenticated)roles.push('authenticated')}
+  if(!FB&&(n.type==='table'||n.type==='view')&&Array.isArray(n.clientPrivs)&&n.clientPrivs.length){if(n.privsByRole){['anon','authenticated'].forEach(function(r){if((n.privsByRole[r]||[]).length)roles.push(r)})}else roles.push('anon / authenticated')}
   if(f&&f.roles&&f.roles.length&&!roles.length)roles=f.roles.slice();
   roles.forEach(function(r){var rid='role:'+r;var pr=n.privsByRole&&n.privsByRole[r]?n.privsByRole[r]:(n.clientPrivs||[]);
     if(add({id:rid,type:'role',label:r,sub:n.type==='function'?'EXECUTE':pr.join(', ').toUpperCase()}))E.push({s:rid,t:id,rel:n.type==='function'?'can execute':'privileges: '+pr.join(', '),conf:'extracted'})});
-  if(n.type==='table'){var pid='policy:'+id;if(add({id:pid,type:'policy',label:(n.policies||0)+' polic'+(n.policies===1?'y':'ies'),sub:n.rls?'RLS on':'RLS off'}))E.push({s:id,t:pid,rel:'policies',conf:'extracted'})}
+  if(!FB&&n.type==='table'){var pid='policy:'+id;if(add({id:pid,type:'policy',label:(n.policies||0)+' polic'+(n.policies===1?'y':'ies'),sub:n.rls?'RLS on':'RLS off'}))E.push({s:id,t:pid,rel:'policies',conf:'extracted'})}
   var codeCallers=ins.filter(function(e){var sN=byId.get(e.source);return sN&&(sN.type==='file'||sN.type==='edge_function'||sN.type==='external'||sN.type==='cron')}).length;
   if(!ncallers||(f&&/uncalled/.test(f.rule)&&!codeCallers)){var nid='none:'+id;add({id:nid,type:'nocaller',label:'no caller in code',ghost:true});E.push({s:nid,t:apiId||id,rel:'none',conf:'ambiguous',ghost:true})}
   over.forEach(function(k,ci){if(k){var mid='more:'+ci;V.set(mid,{id:mid,type:'more',col:ci,label:'+'+k+' more',ghost:true})}});
@@ -554,15 +568,18 @@ function emptyPath(){svg.style.display='none';var o=$('dash');o.style.display='b
 /* ---------- full map: same columns, folders and schema+kind groups collapsed ---------- */
 function mapModel(){var rep=new Map(),V=new Map();
   var groupOf=function(n){if(n.type==='file')return{id:'folder:'+folderOf(n.label),type:'folder',label:folderOf(n.label)+'/'};
+    if(FB&&(n.type==='table'||n.type==='bucket')){var sv=n.service||'firestore';return{id:'grp:'+sv,type:'group',kind:'table',label:(SVC[sv]||sv)+' \u00b7 rule paths'}}
+    if(FB&&n.type==='edge_function')return{id:'grp:functions',type:'group',kind:'edge_function',label:'Cloud Functions'};
     if(n.type==='table'||n.type==='view'||n.type==='function'||n.type==='cron'){var sc=n.schema||(String(n.label).indexOf('.')>0?String(n.label).split('.')[0]:'public');var key='grp:'+sc+':'+n.type;return{id:key,type:'group',kind:n.type,label:sc+' \u00b7 '+(n.type==='function'?'functions':n.type==='cron'?'cron / SQL':n.type+'s')}}return null};
   D.nodes.forEach(function(n){var g=groupOf(n);var v;
     if(g&&!state.expanded.has(g.id)){v=V.get(g.id);if(!v){v=Object.assign({members:0,fix:0,review:0},g);V.set(g.id,v)}v.members++;var w=worst(n.id);if(w==='fix')v.fix++;else if(w==='review')v.review++}
     else{v=V.get(n.id);if(!v){v={id:n.id,type:n.type,label:n.label,n:n,parent:g&&g.id};V.set(n.id,v)}}
     rep.set(n.id,v.id)});
-  ['anon','authenticated'].forEach(function(r){V.set('role:'+r,{id:'role:'+r,type:'role',label:r})});
+  (FB?['anyone','signed-in']:['anon','authenticated']).forEach(function(r){V.set('role:'+r,{id:'role:'+r,type:'role',label:r})});
   var E=new Map();var addE=function(a,b,rel,conf){if(a===b)return;var k=a+'|'+b;var e=E.get(k);if(!e){e={s:a,t:b,count:0,rels:new Set(),firm:false};E.set(k,e)}e.count++;e.rels.add(rel);if(conf==='extracted')e.firm=true};
   D.links.forEach(function(e){var a=rep.get(e.source),b=rep.get(e.target);if(a&&b)addE(a,b,relLabel(e.relation,e.ops),e.confidence)});
-  D.nodes.forEach(function(n){var b=rep.get(n.id);if(n.type==='function'){if(n.anon)addE('role:anon',b,'EXECUTE','extracted');if(n.authenticated)addE('role:authenticated',b,'EXECUTE','extracted')}
+  if(FB)D.nodes.forEach(function(n){var b=rep.get(n.id);if(!n.access||n.missing)return;['anyone','signed-in'].forEach(function(r){var ops=fbRoleOps(n,r);if(ops.length)addE('role:'+r,b,ops.join(', '),'extracted')})});
+  else D.nodes.forEach(function(n){var b=rep.get(n.id);if(n.type==='function'){if(n.anon)addE('role:anon',b,'EXECUTE','extracted');if(n.authenticated)addE('role:authenticated',b,'EXECUTE','extracted')}
     if((n.type==='table'||n.type==='view')&&Array.isArray(n.clientPrivs)&&n.clientPrivs.length){['anon','authenticated'].forEach(function(r){var pr=n.privsByRole?n.privsByRole[r]||[]:n.clientPrivs;if(pr.length)addE('role:'+r,b,pr.join(', ').toUpperCase(),'extracted')})}});
   return{V:V,E:[...E.values()]}}
 function drawMap(){vp.textContent='';$('dash').style.display='none';svg.style.display='block';syncMarkers();
@@ -599,7 +616,14 @@ function drawMap(){vp.textContent='';$('dash').style.display='none';svg.style.di
 var SURF=[['tables','Tables'],['rpc','RPC functions'],['views','Views'],['edge','Edge functions'],['buckets','Storage buckets'],['realtime','Realtime']];
 var ROLES=[['anon','anon'],['authenticated','authenticated'],['public','public (no key)']];
 var NA_NOTE={public:'Every Data API and Realtime request needs at least the anon key.',buckets:'Storage access is decided by policies on storage.objects, which tracegrid does not model.'};
-function reach(){var live=D.nodes.filter(function(n){return !n.missing});
+if(FB){SURF=[['firestore','Firestore paths'],['storage','Storage paths'],['rtdb','Realtime DB paths'],['callable','Callable functions']];ROLES=[['signed-in','any signed-in user'],['public','anyone (no sign-in)']]}
+function reachFb(){var live=D.nodes.filter(function(n){return !n.missing});var M={};
+  ROLES.forEach(function(ro){var lvl=ro[0];M[lvl]={};SURF.forEach(function(su){var k=su[0],ids,note=null;
+    if(k==='callable'){ids=live.filter(function(n){return n.type==='edge_function'&&n.kind==='callable'&&(lvl==='signed-in'||n.noAuthCheck)});note=lvl==='public'?'callables whose handler never reads request.auth':'every deployed callable (onCall)'}
+    else ids=live.filter(function(n){return n.service===k&&n.access&&fbOps(n,lvl).length});
+    M[lvl][k]={ids:ids.map(function(n){return n.id}),uncalled:ids.filter(function(n){return !callers(n.id).length}).map(function(n){return n.id}),note:note}})});
+  return M}
+function reach(){if(FB)return reachFb();var live=D.nodes.filter(function(n){return !n.missing});
   var privs=function(n,r){if(n.privsByRole)return n.privsByRole[r]||[];return Array.isArray(n.clientPrivs)?n.clientPrivs:[]};
   var rt=new Set();D.links.forEach(function(e){if((e.ops||[]).indexOf('realtime')>=0)rt.add(e.target)});
   var M={};ROLES.forEach(function(ro){var r=ro[0];M[r]={};SURF.forEach(function(su){var k=su[0],ids=null,note=null,unc=true;
@@ -611,7 +635,7 @@ function reach(){var live=D.nodes.filter(function(n){return !n.missing});
     if(ids===null){M[r][k]={na:true,note:NA_NOTE[r]||NA_NOTE[k]||''};return}
     M[r][k]={ids:ids.map(function(n){return n.id}),uncalled:unc?ids.filter(function(n){return !callers(n.id).length}).map(function(n){return n.id}):null,note:note}})});
   return M}
-function exposure(M){var t=D.tiers||{fix:0,review:0,info:0};var u=new Set();['tables','views','rpc'].forEach(function(k){var c=M.anon[k];if(c&&c.uncalled)c.uncalled.forEach(function(id){u.add(id)})});
+function exposure(M){var t=D.tiers||{fix:0,review:0,info:0};var u=new Set();(FB?['firestore','storage','rtdb']:['tables','views','rpc']).forEach(function(k){var c=M[FB?'signed-in':'anon'][k];if(c&&c.uncalled)c.uncalled.forEach(function(id){u.add(id)})});
   return{score:10*(t.fix||0)+3*(t.review||0)+u.size,anonUncalled:u.size}}
 /* Plain-English titles, built from the rule and what the finding says about its object. */
 function who(roles){roles=roles||[];var a=roles.indexOf('anon')>=0,u=roles.indexOf('authenticated')>=0;return a&&u?'anon and signed-in users':a?'anon users':u?'signed-in users':'client roles'}
@@ -630,7 +654,19 @@ var TITLES={
 'missing-edge-function':function(){return 'Code invokes an edge function that does not exist'},
 'edge-service-role-before-auth':function(){return 'Edge function uses the service key before checking who is calling'},
 'edge-request-controlled-fetch':function(){return 'Edge function fetches a URL taken from the request'},
-'demo/client-writes-protected-table':function(){return 'Browser code writes a table only the server should write'}};
+'demo/client-writes-protected-table':function(){return 'Browser code writes a table only the server should write'},
+'firebase-rules-public-write':function(f){return f.tier==='fix'?'Anyone can change or delete data here, signed in or not':'Anyone can create documents here, signed in or not'},
+'firebase-rules-open-catch-all':function(){return 'Catch-all rule opens the whole database'},
+'firebase-rules-signed-in-write':function(){return 'Any signed-in user can write here, not only the owner'},
+'firebase-rules-public-read':function(){return 'Anyone can read here, signed in or not'},
+'firestore-rule-unused':function(){return 'Rules open this path to clients, but no client code uses it'},
+'firestore-path-without-rule':function(){return 'Code uses a path that no rule allows (requests are denied)'},
+'uncalled-callable-function':function(){return 'Cloud Function nothing in the app calls'},
+'missing-callable-function':function(){return 'Code calls a Cloud Function that is not exported'},
+'callable-without-auth-check':function(){return 'Cloud Function that never checks who is calling'},
+'firestore-self-writable-access-field':function(){return 'Users can give themselves access by writing a field the rules trust'},
+'firestore-self-grantable-membership':function(){return 'Users can create their own membership (admin, team) document'},
+'duplicate-cloud-function':function(){return 'Cloud Functions that are copies of each other'}};
 function plainTitle(f){var fn=Object.prototype.hasOwnProperty.call(TITLES,f.rule)?TITLES[f.rule]:null;if(fn)return fn(f,f.node&&byId.get(f.node));var r=rules.get(f.rule);return (r&&r.title)||f.rule}
 var inFilter=function(f){return !state.filter||(f.node&&state.filter.ids.has(f.node))};
 function tip(text,right){return h('span',{cls:'q'+(right?' r':''),tabindex:'0',role:'img','aria-label':text,'data-tip':text,text:'?'})}
@@ -658,7 +694,7 @@ function drawDash(){svg.style.display='none';var o=$('dash');o.style.display='bl
   var M=reach();var ex=exposure(M);var t=D.tiers||{fix:0,review:0,info:0};
   /* header strip */
   var st=h('div',{cls:'strip'});
-  st.appendChild(h('div',null,h('span',{cls:'lbl',text:'Exposure'}),h('span',{cls:'big',text:String(ex.score)}),tip('10 × Fix + 3 × Review + 1 per object anon can reach that no code calls ('+ex.anonUncalled+'). Lower is better; 0 means nothing to act on.')));
+  st.appendChild(h('div',null,h('span',{cls:'lbl',text:'Exposure'}),h('span',{cls:'big',text:String(ex.score)}),tip('10 × Fix + 3 × Review + 1 per object '+(FB?'any signed-in user':'anon')+' can reach that no code calls ('+ex.anonUncalled+'). Lower is better; 0 means nothing to act on.')));
   [['fix','fix'],['review','review'],['info','info']].forEach(function(x){st.appendChild(h('div',null,h('span',{cls:x[0],text:GLY[x[0]]+' '+(t[x[0]]||0)+' '+x[1]})))});
   if(D.baseline)st.appendChild(h('div',{cls:'bl'},h('span',{cls:'lbl',text:'Since baseline'}),h('span',null,h('b',{text:'+'+D.baseline.fresh}),document.createTextNode(' new')),h('span',null,h('b',{text:'−'+D.baseline.fixed}),document.createTextNode(' fixed')),tip('Compared with '+D.baseline.file+'. New findings are not in the baseline; fixed ones were in it and are gone.')));
   o.appendChild(st);
@@ -686,7 +722,7 @@ function drawDash(){svg.style.display='none';var o=$('dash');o.style.display='bl
   mx.appendChild(tb);mx.appendChild(h('div',{cls:'legend'},document.createTextNode('cell = '),h('b',{text:'not called'}),document.createTextNode(' / reachable  ·  — n/a')));R.appendChild(mx);
   /* coverage: four stat cells */
   var cv=D.coverage||{};var unp=(cv.sql_unparsed||0)+(cv.partial||0)+(cv.unreadable||0);
-  var cvp=h('div',{cls:'card'},h('h2',null,h('span',null,document.createTextNode('Coverage'),tip('How much of the project the scan understood. Unresolved calls use dynamic names it cannot read. Unparsed counts SQL statements not understood plus partly parsed and unreadable files. Anything above 0 means the findings may miss something.')),h('span',{text:D.source==='catalog'?'live catalog':'migrations'})));
+  var cvp=h('div',{cls:'card'},h('h2',null,h('span',null,document.createTextNode('Coverage'),tip('How much of the project the scan understood. Unresolved calls use dynamic names it cannot read. Unparsed counts SQL statements not understood plus partly parsed and unreadable files. Anything above 0 means the findings may miss something.')),h('span',{text:FB?'rules + code':D.source==='catalog'?'live catalog':'migrations'})));
   var stat=function(k,v,warn){return h('div',{cls:warn?'warn':''},h('span',{cls:'lbl',text:k}),h('b',{text:v==null?'—':String(v)}))};
   cvp.appendChild(h('div',{cls:'cov'},stat('Files',cv.files,!cv.files),stat('Calls',cv.call_sites,!cv.call_sites),stat('Unresolved',cv.unresolved,cv.unresolved>0),stat('Unparsed',unp,unp>0)));R.appendChild(cvp);
   /* right: collapsed sections */

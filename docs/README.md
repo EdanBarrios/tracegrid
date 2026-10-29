@@ -4,6 +4,7 @@
 |---|---|
 | [Configuration](configuration.md) | schema sources, what is read in code, config file, hatches, plugins, CLI options |
 | [Rules](rules.md) | every rule, tier and example |
+| [Firebase](firebase.md) | Firestore / Storage / Realtime Database rules, Cloud Functions, Dart and JS/TS |
 | [Output](output.md) | graph.json, report.md, graph.html, SARIF, colourways |
 | [CI](ci.md) | baseline, `--check`, GitHub Actions, SARIF |
 | [Limitations](limitations.md) | what tracegrid cannot see |

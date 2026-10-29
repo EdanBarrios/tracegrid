@@ -1,7 +1,7 @@
 // Build the graph and findings from code, SQL and edge-function scans.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig, findFiles } from './config.js';
+import { loadConfig, findFiles, ConfigError } from './config.js';
 import { scanFiles } from './scan-code.js';
 import { scanMigrations, sqlRefs, roleClosure, grantModel } from './scan-sql.js';
 import { fromMigrations, schemaOf } from './catalog.js';
@@ -11,6 +11,8 @@ import { edgeHints } from './edge-checks.js';
 import { resolveProject } from './supabase-project.js';
 import { coreRules } from './rules/core.js';
 import { loadPlugins, runRules, makeGraph, RuleError, TIERS } from './engine.js';
+import { hasFirebaseProject } from './firebase/project.js';
+import { analyzeFirebase } from './firebase/analyze.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -61,18 +63,30 @@ const IGNORE_CATEGORY = {
 /** Subject match: exact, or a function name matching any of its overloads (`name/arity`). */
 const sameSubject = (id, name) => id === name || id.startsWith(name + '/');
 
-function makeSuppressor(cfg, hatches) {
+export function makeSuppressor(cfg, hatches, categories = IGNORE_CATEGORY) {
   const ign = cfg.ignore;
   return (f) => {
     const byId = (ign.findings || []).find((x) => x.id === f.fingerprint);
     if (byId) return `config ignore.findings: ${byId.reason}`;
-    const cat = IGNORE_CATEGORY[f.rule];
+    const cat = categories[f.rule];
     const hit = cat && (ign[cat] || []).find((x) => sameSubject(f.id, x.name));
     if (hit) return `config ignore.${cat}: ${hit.reason}`;
     const h = hatches.find((x) => x.rule === f.rule && sameSubject(f.id, x.subject));
     if (h) return `hatch at ${h.at}: ${h.reason}`;
     return null;
   };
+}
+
+/**
+ * Firebase or Supabase? `platform` in the config decides; "auto" picks Firebase when firebase.json
+ * exists and no Supabase project (supabase/config.toml or supabase/migrations) does.
+ */
+function usesFirebase(root, cfg, opts) {
+  const p = cfg.platform || 'auto';
+  if (p === 'firebase') return true;
+  if (p === 'supabase' || !hasFirebaseProject(root, cfg)) return false;
+  if (cfg.supabaseDir || cfg.migrations) return false;
+  try { return resolveProject(root, cfg).how === 'default (not found)'; } catch { return false; }
 }
 
 export async function analyze(root, opts = {}) {
@@ -89,6 +103,10 @@ export async function analyze(root, opts = {}) {
       warnings.push(`${listed.length} plugin(s) in the config were not loaded (--no-plugins).`);
       plugins = [];
     } else plugins = await loadPlugins(cfg._dir || root, listed, { root });
+  }
+  if (usesFirebase(root, cfg, opts)) {
+    if (opts.dbUrl) throw new ConfigError('--db-url reads a Postgres catalog; this is a Firebase project (firebase.json). Set "platform": "supabase" to check a Supabase project in the same tree.');
+    return analyzeFirebase(root, { cfg, plugins, warnings });
   }
   const project = resolveProject(root, cfg);
   // Exposed schemas: the config wins, else config.toml [api] schemas (what PostgREST serves).
@@ -461,7 +479,7 @@ export async function analyze(root, opts = {}) {
 }
 
 /** Top-level directories the scanned files live in, with counts: [{ dir, files }]. */
-function codeRoots(files) {
+export function codeRoots(files) {
   const m = new Map();
   for (const f of files) { const i = f.indexOf('/'); const d = i < 0 ? '.' : f.slice(0, i); m.set(d, (m.get(d) || 0) + 1); }
   return [...m].sort((a, b) => b[1] - a[1]).map(([dir, n]) => ({ dir, files: n }));

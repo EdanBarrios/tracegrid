@@ -15,8 +15,13 @@ export function renderReport(r) {
   r = { ...r, findings: r.findings.map((f) => (f.tier ? f : { ...f, tier: TIER_OF_LEVEL[f.level] || 'review' })) };
   L.push(`# tracegrid report: ${esc(r.root)}`, '', `Generated ${r.generated_at}. Schema version ${r.schema_version}. v0, best effort: static analysis, read the limitations in the README before acting on a finding.`, '');
   if (r.warnings && r.warnings.length) { for (const w of r.warnings) L.push(`> **Warning:** ${esc(w)}`, ''); }
-  L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
-  if (r.project) {
+  const fb = r.platform === 'firebase';
+  if (fb) {
+    const pj = r.project;
+    L.push(`Firebase project: ${code(pj.configFile)}. Rules: ${pj.rules.length ? pj.rules.map((x) => `${code(x.file)} (${esc(x.service)}, ${x.allows} allow statements)`).join(', ') : 'none found'}. `
+      + `Functions: ${pj.functions.length ? pj.functions.map((f) => code(f.dir)).join(', ') : 'none'}.`, '');
+  } else L.push(`Schema source: **${r.source}**${r.source === 'migrations' ? ' (replayed from migration files; best effort)' : ' (read from a live database catalog)'}.`, '');
+  if (r.project && !fb) {
     const g = r.project.grantModel || {};
     L.push(`Supabase project: ${code(r.project.supabaseDir)} (${esc(r.project.how)}). Default-grant model: **${esc(g.model)}** (${esc(g.source)}).`
       + (g.live ? ` Live database: tables ${esc(g.live.tables)}; functions ${esc(g.live.functions)}.` : ''), '');
@@ -25,16 +30,24 @@ export function renderReport(r) {
   const t = r.tiers || { fix: 0, review: 0, info: 0 };
   const inTier = (rule, tier) => r.findings.filter((f) => f.rule === rule && f.tier === tier).length;
   L.push('## Summary', '', `**Fix ${t.fix}** · Review ${t.review} · Info ${t.info}`, '',
-    '- **Fix**: high confidence. Reachable by anon/authenticated (or PUBLIC) with no recognised caller and no dynamic call that could reach it, or client-used tables without RLS. Act on these.',
+    fb ? '- **Fix**: high confidence. Rules that let anyone write, catch-all rules that open the whole database, or paths open to any signed-in user that no client code uses (and no dynamic reference could reach). Act on these.'
+      : '- **Fix**: high confidence. Reachable by anon/authenticated (or PUBLIC) with no recognised caller and no dynamic call that could reach it, or client-used tables without RLS. Act on these.',
     '- **Review**: the same kinds of problem with a caveat (dynamic calls or dynamic SQL, heuristic client detection, indirect reachability), or a functional problem rather than an exposure.',
     '- **Info**: intended or benign patterns (helpers RLS policies need, notes).', '',
     '| Finding | Fix | Review | Info |', '|---|---:|---:|---:|');
   for (const rule of r.rules) L.push(`| ${rule.title} (\`${rule.id}\`) | ${inTier(rule.id, 'fix')} | ${inTier(rule.id, 'review')} | ${inTier(rule.id, 'info')} |`);
-  L.push(`| Storage buckets referenced (info) | | | ${r.info.storage_buckets.length} |`);
+  if (!fb) L.push(`| Storage buckets referenced (info) | | | ${r.info.storage_buckets.length} |`);
   L.push(`| Unresolved dynamic names (info) | | | ${r.info.unresolved_dynamic_calls.length} |`);
-  L.push(`| SQL statements not understood (info) | | | ${r.info.unparsed_sql.length} |`, '');
+  L.push(`| ${fb ? 'Rules statements' : 'SQL statements'} not understood (info) | | | ${r.info.unparsed_sql.length} |`, '');
   const s = r.stats;
-  L.push('## What was scanned', '',
+  if (fb) {
+    const k = s.cloud_functions_by_kind;
+    L.push('## What was scanned', '',
+      `- ${s.files_scanned} code files, ${s.call_sites} resolved call sites, ${s.unresolved} unresolved.`,
+      `- Distinct Firestore paths used: ${s.firestore_paths_used.client} from client code, ${s.firestore_paths_used.server} from Cloud Functions (Admin SDK, bypasses rules).`,
+      `- ${s.rules_files} rules file(s): ${s.rule_paths} rule paths, ${s.allows} allow statements, ${s.rules_unparsed} not understood.`,
+      `- ${s.cloud_functions} Cloud Functions (${k.callable} callable, ${k.http} HTTP, ${k.trigger} triggers); ${s.callables_called} called by name from client code.`, '');
+  } else L.push('## What was scanned', '',
     `- ${s.files_scanned} code files, ${s.call_sites} resolved call sites, ${s.unresolved} unresolved.`,
     `- Distinct RPCs called: ${s.distinct_rpcs_called.client} from client code, ${s.distinct_rpcs_called.edge} from edge functions.`,
     `- Distinct tables/views touched: ${s.distinct_tables_touched.client} client, ${s.distinct_tables_touched.edge} edge.`,
@@ -75,19 +88,21 @@ export function renderReport(r) {
     L.push('');
   }
   const ext = r.info.external_entry_points || [];
-  L.push(`## External entry points (${ext.length})`, '', 'Edge functions treated as called from outside the codebase, so they are not reported as uncalled. Check the reasons still hold.', '');
+  L.push(`## External entry points (${ext.length})`, '', `${fb ? 'Cloud Functions' : 'Edge functions'} treated as called from outside the codebase, so they are not reported as uncalled. Check the reasons still hold.`, '');
   for (const e of ext) L.push(`- ${code(e.id)}: ${esc(e.reason)} (${esc(e.source)})`);
   L.push('');
-  L.push(`## Storage buckets referenced (${r.info.storage_buckets.length})`, '');
-  for (const b of r.info.storage_buckets) L.push(`- ${code(b.id)}: ${b.sites} site(s), first at ${code(b.at)}`);
-  L.push('');
+  if (!fb) {
+    L.push(`## Storage buckets referenced (${r.info.storage_buckets.length})`, '');
+    for (const b of r.info.storage_buckets) L.push(`- ${code(b.id)}: ${b.sites} site(s), first at ${code(b.at)}`);
+    L.push('');
+  }
   L.push(`## Unresolved dynamic names (${r.info.unresolved_dynamic_calls.length})`, '', 'Calls whose target name is not a literal. They are counted and listed, never dropped. A function reached only through one of these may appear in "nothing calls" above.', '');
   if (r.info.unresolved_dynamic_calls.length) {
     L.push('| Kind | Where | Expression |', '|---|---|---|');
     for (const u of r.info.unresolved_dynamic_calls) L.push(`| ${esc(u.kind)} | ${tcode(`${u.file}:${u.line}`)} | ${tcode(u.expr)} |`);
   }
   L.push('');
-  L.push(`## SQL not understood (${r.info.unparsed_sql.length})`, '', 'Statements the migration parser skipped or could not apply. State derived from them may be wrong.', '');
+  L.push(`## ${fb ? 'Rules' : 'SQL'} not understood (${r.info.unparsed_sql.length})`, '', fb ? 'Rules statements the parser skipped. Access derived from them may be wrong.' : 'Statements the migration parser skipped or could not apply. State derived from them may be wrong.', '');
   if (r.info.unparsed_sql.length) {
     L.push('| Where | Reason | Statement |', '|---|---|---|');
     for (const u of r.info.unparsed_sql) L.push(`| ${tcode(`${u.file}:${u.line}`)} | ${u.risky ? '**touches grants/policies** ' : ''}${esc(u.reason)} | ${tcode(u.text)} |`);

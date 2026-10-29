@@ -1,5 +1,7 @@
 # Configuration
 
+Firebase projects: see [firebase.md](firebase.md#configuration) for `platform`, `firebaseJson` and `wrappers.firestore`.
+
 ## Where the schema comes from
 
 - **Migrations (default).** The Supabase project is auto-detected (`**/supabase/config.toml`)

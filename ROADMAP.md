@@ -15,9 +15,13 @@ from here) matters to you.
 - **More edge-function security rules.** Beyond `edge-service-role-before-auth` and
   `edge-request-controlled-fetch`.
 - **Policy logic checks.** RLS policies that are always true, or that ignore `auth.uid()`.
+- **Firebase live mode.** Compare deployed Security Rules with the repository's (needs a
+  read-only Rules Viewer role); catches rules edited in the console.
+- **Duplicate endpoints for Supabase.** The near-copy check Cloud Functions have, for SQL
+  functions and edge functions.
+- **A map agents read before they write.** Let a coding agent ask "does a function or path
+  like this already exist?" from `graph.json`, so sessions stop rebuilding the same endpoint.
 
 ## Later
 
-- **Firebase.** Firestore and Realtime Database rules plus client SDK calls, same graph and
-  tiers.
 - Other backends (Hasura, PocketBase, plain Postgres + PostgREST) if there is demand.

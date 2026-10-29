@@ -1,0 +1,2 @@
+{ "name": "taskboard-functions", "main": "lib/index.js", "private": true,
+  "dependencies": { "firebase-admin": "^13.0.0", "firebase-functions": "^6.0.0" } }
