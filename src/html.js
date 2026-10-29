@@ -61,6 +61,8 @@ export function renderHtml(r, opts = {}) {
     rules: r.rules.map(({ id, level, tier, title, why }) => ({ id, level, tier, title, why })),
     fg3d: FG3D,
     colorway, colorways: COLORWAYS,
+    // Set only by `tracegrid --serve` (the copy it sends, never the file on disk): the page may call back to it.
+    serve: opts.serve ? { watch: !!opts.serve.watch } : null,
   };
   return `<!doctype html>
 <html lang="en" data-colorway="${colorway}" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -190,6 +192,7 @@ const CSS = String.raw`
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:var(--fs)/1.4 var(--font)}
 button{font:inherit;color:inherit;background:transparent;border:var(--hair) solid var(--line2);padding:2px 8px;cursor:pointer}
 button:hover{border-color:var(--fg)}button.ghost{border-color:transparent}button.ghost:hover{border-color:var(--line2)}
+#refresh.stale{color:var(--accent);border-color:var(--accent)}#refresh.err{color:var(--fix)}
 button:focus-visible,input:focus-visible{outline:var(--hair) solid var(--sel);outline-offset:1px}
 .muted{color:var(--muted)}.mono{font-family:var(--font)}
 .lbl{font-size:var(--fs-label);letter-spacing:var(--track);text-transform:uppercase;color:var(--muted)}
@@ -787,6 +790,27 @@ gear.addEventListener('click',function(ev){ev.stopPropagation();pop.hidden=!pop.
 pop.addEventListener('click',function(ev){ev.stopPropagation()});
 document.addEventListener('click',closePop);
 document.addEventListener('keydown',function(ev){if(ev.key==='Escape'&&!pop.hidden){closePop();gear.focus()}});
+
+/* ---------- refresh: only in the copy served by tracegrid --serve ---------- */
+if(D.serve){(function(){
+var rb=h('button',{id:'refresh',cls:'ghost',title:'Re-scan the project and reload',text:'\u21bb'});rb.setAttribute('aria-label','Refresh');
+$('theme').parentNode.insertBefore(rb,$('theme'));
+var busy=false,stale=false;
+function idle(title){busy=false;rb.disabled=false;rb.textContent='\u21bb';rb.title=title}
+rb.addEventListener('click',function(){
+  if(busy)return;
+  if(stale){location.reload();return}
+  busy=true;rb.disabled=true;rb.textContent='\u2026';rb.classList.remove('err');
+  fetch('/refresh',{method:'POST',headers:{'X-Tracegrid':'1'}}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){if(!r.ok)throw new Error(j.error||('HTTP '+r.status));location.reload()})})
+    .catch(function(e){idle('Refresh failed: '+e.message);rb.classList.add('err')});
+});
+if(D.serve.watch)setInterval(function(){
+  fetch('/status').then(function(r){return r.json()}).then(function(j){
+    if(j.error){rb.classList.add('err');rb.title='Last scan failed: '+j.error}
+    if(j.generated_at&&j.generated_at!==D.generated_at&&!j.running){stale=true;rb.classList.add('stale');rb.title='New results are ready: click to reload'}
+  }).catch(function(){});
+},2000);
+})()}
 /* The 3D scene keeps its own materials: re-read the palette and push it into them. */
 function recolor3d(){if(!G3||!nodes3)return;pal();G3.backgroundColor(P3.bg);
   if(starMat){starMat.color.set(P3.star);if(starMat.emissive)starMat.emissive.set(P3.star)}

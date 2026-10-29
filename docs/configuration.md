@@ -140,6 +140,7 @@ tracegrid [dir] [options]
 tracegrid help | --demo
   --out <dir>  --config <file>  --baseline <file>  --db-url <url>
   --check [--check-level fix|review]  --update-baseline [--force]  --sarif <file>  --github  --no-output  --colorway <name>
+  --json  --serve [--watch] [--port <n>]
   --allow-plugins | --no-plugins  --demo  -h/--help  -v/--version
 ```
 

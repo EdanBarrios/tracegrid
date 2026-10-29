@@ -72,6 +72,8 @@ claude plugin marketplace add EdanBarrios/tracegrid
 claude plugin install tracegrid@tracegrid
 ```
 
+Other agents: `npx tracegrid --json` prints one JSON object (findings with `file:line`) for scripts and agent sessions; [docs/agents.md](docs/agents.md) has an `AGENTS.md` snippet. `npx tracegrid --serve --watch` serves the dashboard on localhost with a Refresh button.
+
 ## How it works
 
 - Replays your Supabase migrations (or reads the live catalog with `--db-url`) to learn tables, functions, grants and RLS.

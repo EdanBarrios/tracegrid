@@ -31,6 +31,14 @@ SARIF, baseline and `--check` as Supabase. See [docs/firebase.md](docs/firebase.
 - `graph.html` speaks Firebase: rule paths, Cloud Functions and Storage paths; a reach matrix
   of who passes the rules (any signed-in user, anyone) per service; the path view shows the
   client SDK, the Security Rules and who passes them.
+- `--json`: one JSON object on stdout (tier counts, Fix and Review findings with `file:line`, scope
+  problems, warnings, and `new` against a baseline), human text on stderr. For scripts and agents.
+- `--serve` [`--watch`] [`--port <n>`]: serves `graph.html` on `127.0.0.1` with a Refresh button
+  that re-scans the project (and `/graph.json`, `/report.md`). Loopback only, Host and Origin
+  checked, no plugins unless `--allow-plugins`. The file on disk is unchanged and stays static.
+- `graph.html`: `ember` colourway (orange and yellow on the same black and grid), the default for
+  Firebase projects.
+- The Claude Code skill and `AGENTS.md` snippet cover Firebase.
 - Benchmark: 70 public Firebase repositories in two rounds, 75 of 75 Fix findings correct after
   the fixes they prompted; the second, fresh round was 38 of 45 before them
   ([BENCHMARKS.md](BENCHMARKS.md#firebase)).
