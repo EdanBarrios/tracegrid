@@ -1,7 +1,7 @@
 {
   "name": "tracegrid",
   "version": "0.2.1",
-  "description": "Map how your app code reaches your Supabase schema: tables, RPCs, edge functions, storage, grants and RLS. Static, offline, no AI.",
+  "description": "Map how your app code reaches your Supabase or Firebase backend: tables, RPCs, Security Rules, Cloud Functions, storage, grants and RLS. Static, offline, no AI.",
   "type": "module",
   "bin": {
     "tracegrid": "bin/tracegrid.js"
@@ -29,6 +29,9 @@
   },
   "keywords": [
     "supabase",
+    "firebase",
+    "firestore",
+    "security-rules",
     "postgres",
     "rls",
     "static-analysis",
